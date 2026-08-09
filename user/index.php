@@ -1,4 +1,5 @@
 <?php
+$is_defend=true;
 include("../includes/common.php");
 
 if(isset($_GET['invite'])){
@@ -11,7 +12,7 @@ if(isset($_GET['invite'])){
 
 if($islogin2==1){}else exit("<script language='javascript'>window.location.href='./login.php';</script>");
 
-if(empty($userrow['account']) || empty($userrow['username'])){
+if(!$conf['reg_input_settle'] && (empty($userrow['account']) || empty($userrow['username']))){
 	exit("<script language='javascript'>window.location.href='./completeinfo.php';</script>");
 }
 
@@ -109,7 +110,7 @@ if(empty($userrow['pwd'])){
 			    <div class="top text-right w-full"><i class="fa fa-caret-down text-warning m-r-sm"></i></div>
 			  <div class="row">
 			  <div class="col-xs-3"><div class="round"><i class="fa fa-money fa-fw"></i></div></div>
-			  <div class="col-xs-9"><div class="h1 text-primary-dk font-thin h1"><span class="text-muted text-md">￥</span><?php echo $userrow['money']?></div><span class="text-muted">商户当前余额</span></div>
+			  <div class="col-xs-9"><div class="h1 text-primary-dk font-thin h1"><span class="text-muted text-md">¥</span><?php echo $userrow['money']?></div><span class="text-muted">商户当前余额</span></div>
 			  </div>
 			  </div>
             </div>
@@ -118,7 +119,7 @@ if(empty($userrow['pwd'])){
 			    <div class="top text-right w-full"><i class="fa fa-caret-down text-warning m-r-sm"></i></div>
 			  <div class="row">
 			  <div class="col-xs-3"><div class="round"><i class="fa fa-check-square-o fa-fw"></i></div></div>
-			  <div class="col-xs-9"><div class="h1 text-dark-dk font-thin h1"><span class="text-muted text-md">￥</span><span id="settle_money"></span></div><span class="text-muted">已结算余额</span></div>
+			  <div class="col-xs-9"><div class="h1 text-dark-dk font-thin h1"><span class="text-muted text-md">¥</span><span id="settle_money"></span></div><span class="text-muted">已结算余额</span></div>
 			  </div>
 			  </div>
             </div>
@@ -166,6 +167,18 @@ if(empty($userrow['pwd'])){
                 <i class="fa fa-plus-circle fa-fw"></i><span>昨日收入</span>
               </a>
             </div>
+			<?php if($conf['user_transfer']==1){?>
+			<div class="hbox text-center b-t b-light bg-light">          
+              <a class="col padder-v text-muted b-r b-light">
+                <div class="h3"><span id="transfer_today_all"></span></div>
+                <i class="fa fa-send fa-fw"></i><span>今日支出</span>
+              </a>
+              <a class="col padder-v text-muted">
+                <div class="h3"><span id="transfer_lastday_all"></span></div>
+                <i class="fa fa-send-o fa-fw"></i><span>昨日支出</span>
+              </a>
+            </div>
+			<?php }?>
           </div>
 
 		  <div class="panel panel-default text-center">
@@ -175,7 +188,7 @@ if(empty($userrow['pwd'])){
 		<div class="table-responsive">
 		<table class="table table-striped">
 		<thead><tr id="paytypes"></tr></thead>
-		<tbody><tr id="order_today"></tr><tr id="order_lastday"></tr><tr id="payrates"></tr></tbody>
+		<tbody><tr id="order_today"></tr><tr id="order_lastday"></tr><tr id="success_rate"></tr><tr id="payrates"></tr></tbody>
 		</table>
 		</div>
 		</div>
@@ -189,7 +202,7 @@ if(empty($userrow['pwd'])){
 		</div>
 		<div class="list-group">
 <?php foreach($list as $row){?>
-			<a class="list-group-item"><em class="fa fa-fw fa-volume-up"></em><font color="<?php echo $row['color']?$row['color']:null?>"><?php echo $row['content']?></font><span class="text-xs text-muted">&nbsp;-<?php echo $row['addtime']?></span></a>
+			<div class="list-group-item"><em class="fa fa-fw fa-volume-up"></em><font color="<?php echo $row['color']?$row['color']:null?>"><?php echo $row['content']?></font><span class="text-xs text-muted">&nbsp;-<?php echo $row['addtime']?></span></div>
 <?php }?>
 		</div>
 		</div>
@@ -199,21 +212,47 @@ if(empty($userrow['pwd'])){
               <input type="checkbox" ng-model="showSpline">
               <i></i>
             </label>
-            <h4 class="font-thin m-t-none m-b text-muted">结算统计表</h4>
-            <div ui-jq="plot" ui-refresh="showSpline" ui-options="
-              [
-                { data: [ <?php echo $chart?> ], label:'结算金额', points: { show: true, radius: 1}, splines: { show: true, tension: 0.4, lineWidth: 1, fill: 0.8 } }
-              ], 
-              {
-                colors: ['#23b7e5', '#7266ba'],
-                series: { shadowSize: 3 },
-                xaxis:{ font: { color: '#a1a7ac' } },
-                yaxis:{ font: { color: '#a1a7ac' }, max:<?php echo ($max_settle+10)?> },
-                grid: { hoverable: true, clickable: true, borderWidth: 0, color: '#dce5ec' },
-                tooltip: true,
-                tooltipOpts: { content: '结算金额￥%y',  defaultTheme: false, shifts: { x: 10, y: -25 } }
-              }
-            " style="height:246px" >
+            
+            <!-- Tab导航 -->
+            <ul class="nav nav-tabs" role="tablist">
+              <li role="presentation" class="active">
+                <a href="#settle-tab" aria-controls="settle-tab" role="tab" data-toggle="tab">结算统计</a>
+              </li>
+              <li role="presentation">
+                <a href="#order-tab" aria-controls="order-tab" role="tab" data-toggle="tab">订单金额统计</a>
+              </li>
+            </ul>
+            
+            <!-- Tab内容 -->
+            <div class="tab-content">
+              <!-- 结算统计表 -->
+              <div role="tabpanel" class="tab-pane active" id="settle-tab">
+                <div ui-jq="plot" ui-refresh="showSpline" ui-options="
+                  [
+                    { data: [ <?php echo $chart?> ], label:'结算金额', points: { show: true, radius: 1}, splines: { show: true, tension: 0.4, lineWidth: 1, fill: 0.8 } }
+                  ], 
+                  {
+                    colors: ['#23b7e5', '#7266ba'],
+                    series: { shadowSize: 3 },
+                    xaxis:{ font: { color: '#a1a7ac' } },
+                    yaxis:{ font: { color: '#a1a7ac' }, max:<?php echo ($max_settle+10)?> },
+                    grid: { hoverable: true, clickable: true, borderWidth: 0, color: '#dce5ec' },
+                    tooltip: true,
+                    tooltipOpts: { content: '结算金额¥%y',  defaultTheme: false, shifts: { x: 10, y: -25 } }
+                  }
+                " style="height:260px" >
+                </div>
+              </div>
+              
+              <!-- 订单统计表 -->
+              <div role="tabpanel" class="tab-pane" id="order-tab">
+                <div id="order-chart-container" style="height:260px">
+                  <div class="text-center" style="padding:100px 0;">
+                    <p>点击切换到此标签页将加载订单统计数据</p>
+                    <p class="text-muted">显示近7天订单金额趋势</p>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -223,6 +262,7 @@ if(empty($userrow['pwd'])){
     </div>
   </div>
 
+<script src="/assets/js/chart.js"></script>
 <?php include 'foot.php';?>
 <script>
 $(document).ready(function(){
@@ -237,12 +277,15 @@ $(document).ready(function(){
 			$('#settle_money').html(data.settle_money);
 			$('#order_today_all').html(data.order_today_all);
 			$('#order_lastday_all').html(data.order_lastday_all);
+			$('#transfer_today_all').html(data.transfer_today_all);
+			$('#transfer_lastday_all').html(data.transfer_lastday_all);
 			$.each(data.channels, function (i, item) {
 				$('#paytypes').append('<th style="text-align:center;"><img src="/assets/icon/'+item.name+'.ico" width="18px">&nbsp;'+item.showname+'</th>');
 			});
 			$.each(data.channels, function (i, item) {
 				$('#order_today').append('<td>今日：'+item.order_today+' 元</td>');
 				$('#order_lastday').append('<td>昨日：'+item.order_lastday+' 元</td>');
+				$('#success_rate').append('<td>成功率：'+item.success_rate+' %</td>');
 				$('#payrates').append('<td>费率：'+item.rate+' %</td>');
 			});
 		}
@@ -250,5 +293,72 @@ $(document).ready(function(){
 	<?php if(!empty($conf['modal'])){?>
 	$('#myModal').modal('show');
 	<?php }?>
+
+	// 监听tab切换事件
+	$('a[data-toggle="tab"]').on('shown.bs.tab', function (e) {
+		var target = $(e.target).attr("href"); // 激活的tab
+		if (target === '#order-tab') {
+			// 当切换到订单统计表时
+			loadOrderChart();
+		}
+	});
+
+	function loadOrderChart() {
+		// 如果图表已经初始化，则销毁它，避免重复初始化
+		if (window.orderChartInstance) {
+			window.orderChartInstance.destroy();
+		}
+		
+		// 显示加载中
+		$('#order-chart-container').html('<div class="text-center" style="padding:100px 0;">加载中...</div>');
+		
+		$.ajax({
+			type : "GET",
+			url : "ajax2.php?act=orderCount",
+			dataType : 'json',
+			async: true,
+			success : function(data) {
+				initOrderChart(data);
+			}
+		});
+	}
+
+	function initOrderChart(data) {
+		// 准备canvas容器
+		$('#order-chart-container').html('<canvas id="orderChart"></canvas>');
+		
+		var ctx = document.getElementById('orderChart').getContext('2d');
+		window.orderChartInstance = new Chart(ctx, {
+			type: 'line',
+			data: {
+				labels: data.labels,
+				datasets: data.datasets
+			},
+			options: {
+				responsive: true,
+				maintainAspectRatio: false,
+				scales: {
+					y: {
+						beginAtZero: true,
+						ticks: {
+							callback: function(value) {
+								return '¥' + value;
+							}
+						}
+					}
+				},
+				plugins: {
+					legend: {
+						display: true,
+						position: 'top'
+					},
+					tooltip: {
+						mode: 'index',
+						intersect: false
+					}
+				}
+			}
+		});
+	}
 });
 </script>

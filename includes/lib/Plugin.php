@@ -43,20 +43,60 @@ class Plugin {
 			$trade_no = $matchs[2];
 			
 			$order = $DB->getRow("SELECT A.*,B.name typename,B.showname typeshowname FROM pre_order A left join pre_type B on A.type=B.id WHERE trade_no=:trade_no limit 1", [':trade_no'=>$trade_no]);
-			$userrow = $DB->find('user', 'ordername,channelinfo', ['uid'=>$order['uid']]);
+			$userrow = $DB->find('user', 'gid,ordername,channelinfo', ['uid'=>$order['uid']]);
+			$groupconfig = getGroupConfig($userrow['gid']);
+			$conf = array_merge($conf, $groupconfig);
             if (!$order) {
-				$channelinfo = $userrow?$userrow['channelinfo']:null;
-				$channel = \lib\Channel::get($trade_no, $channelinfo);
+				$channel = \lib\Channel::get($trade_no, $userrow['channelinfo']);
 				if(!$channel) throw new Exception('该订单号不存在，请返回来源地重新发起请求！');
 				$trade_no = null;
             }else{
-				$channelinfo = $userrow?$userrow['channelinfo']:null;
-				$channel = $order['subchannel'] > 0 ? \lib\Channel::getSub($order['subchannel']) : \lib\Channel::get($order['channel'], $channelinfo);
+				$channel = $order['subchannel'] > 0 ? \lib\Channel::getSub($order['subchannel']) : \lib\Channel::get($order['channel'], $userrow['channelinfo']);
 				if(!$channel) throw new Exception('当前支付通道信息不存在');
 				$channel['apptype'] = explode(',',$channel['apptype']);
 	
 				if(!empty($userrow['ordername']))$conf['ordername']=$userrow['ordername'];
 				$ordername = !empty($conf['ordername'])?ordername_replace($conf['ordername'],$order['name'],$order['uid'],$trade_no,$order['out_trade_no']):$order['name'];
+				$order['plugin'] = $channel['plugin'];
+				if(!empty($order['cert_info'])){
+					$cert_info = json_decode($order['cert_info'], true);
+					$order['cert_no'] = $cert_info['cert_no'];
+					$order['cert_name'] = $cert_info['cert_name'];
+					$order['min_age'] = $cert_info['min_age'];
+				}
+			}
+
+			if($order && $func=='checkpay'){
+				$selfurl = is_self_url($order['payurl']);
+				if($conf['wxpay_qrpaylogin'] == 1 && !$selfurl && checkwechat()){
+					$wxinfo = \lib\Channel::getWeixin($conf['wxpay_web_login']);
+					if(!$wxinfo) return ['type'=>'error','msg'=>'微信快捷登录公众号不存在'];
+					$openid = wechat_oauth($wxinfo);
+					$blocks = checkBlockUser($openid, $trade_no);
+					if($blocks) return $blocks;
+				}elseif($conf['alipay_qrpaylogin'] == 1 && !$selfurl && checkalipay()){
+					[$user_type, $user_id] = alipay_oauth();
+					$blocks = checkBlockUser($user_id, $trade_no);
+					if($blocks) return $blocks;
+				}
+				if($conf['check_pay_regoin'] > 0 && !empty($order['ip']) && !self::checkorderipregion($order['ip'])){
+					if($conf['check_pay_regoin'] == 1){
+						return ['type'=>'error','msg'=>'请勿用他人发过来的二维码或链接进行支付，以防资金损失！<br/><br/>若为您本人操作，请使用与下单时相同的网络环境进行支付，谢谢配合！<br/>'];
+					}elseif($conf['check_pay_regoin'] == 2){
+						global $cdnpublic;
+						include PAYPAGE_ROOT.'pay_warning.php';
+						exit;
+					}
+				}
+				exit('<script>location.href="'.$order['payurl'].'";</script>');
+			}
+
+			if($order && $func=='getpayurl'){
+				if(!empty($order['payurl'])){
+					return ['type'=>'json','data'=>['code'=>0, 'msg'=>'ok', 'payurl'=>$order['payurl']]];
+				}else{
+					return ['type'=>'json','data'=>['code'=>-1, 'msg'=>'订单支付链接不存在']];
+				}
 			}
 
 			$result = self::loadClass($channel['plugin'], $func, $trade_no);
@@ -67,6 +107,27 @@ class Plugin {
 		}else{
 			throw new Exception('URL参数不符合规范');
 		}
+	}
+
+	static private function checkorderipregion($orderip){
+		global $clientip;
+		if(!class_exists('\\lib\\Ip2Region')) return true;
+		try{
+			$ipregion = new \lib\Ip2Region();
+			$region = $ipregion->search($orderip);
+			if(!$region) return true;
+			$region = explode('|',$region);
+			$order_region = $region[2].$region[3];
+			$region = $ipregion->search($clientip);
+			if(!$region) return true;
+			$region = explode('|',$region);
+			$client_region = $region[2].$region[3];
+			if($order_region != $client_region){
+				return false;
+			}
+		}catch(Exception $e){
+		}
+		return true;
 	}
 
 	static public function loadForSubmit($plugin, $trade_no, $ismapi=false){
@@ -164,7 +225,42 @@ class Plugin {
 					return false;
 				}
 			}else{
-				$message = '当前支付通道不支持API退款';
+				$message = '当前支付插件不支持API退款';
+				return false;
+			}
+		}else{
+			$message = '支付插件不存在';
+			return false;
+		}
+	}
+
+	static public function close($trade_no, &$message){
+		global $order,$channel,$DB;
+		if(!preg_match('/^(.[0-9]+)$/',$trade_no))return false;
+		$channel = $order['subchannel'] > 0 ? \lib\Channel::getSub($order['subchannel']) : \lib\Channel::get($order['channel'], $DB->findColumn('user', 'channelinfo', ['uid'=>$order['uid']]));
+		if(!$channel){
+			$message = '当前支付通道信息不存在';
+			return false;
+		}
+		$filename = PLUGIN_ROOT.$channel['plugin'].'/'.$channel['plugin'].'_plugin.php';
+		$classname = '\\'.$channel['plugin'].'_plugin';
+		$func = 'close';
+		if($order['combine'] == 1) $func = 'close_combine';
+		if(file_exists($filename)){
+			include $filename;
+			if (class_exists($classname, false) && method_exists($classname, $func)) {
+				if(!defined("IN_PLUGIN")) define("IN_PLUGIN", true);
+				define("PAY_ROOT", PLUGIN_ROOT.$channel['plugin'].'/');
+				define("TRADE_NO", $trade_no);
+				$result = $classname::$func($order);
+				if($result && $result['code']==0){
+					return true;
+				}else{
+					$message = $result['msg'];
+					return false;
+				}
+			}else{
+				$message = '当前支付插件不支持关闭订单';
 				return false;
 			}
 		}else{

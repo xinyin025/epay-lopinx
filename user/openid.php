@@ -17,7 +17,7 @@ if(isset($_GET['wechatid'])){
 }elseif(isset($_GET['channel'])){
 	$channelid = intval($_GET['channel']);
 }else{
-	if(!$conf['transfer_wxpay'])sysmsg("未开启微信企业付款");
+	if(!$conf['transfer_wxpay'])sysmsg("未开启微信转账接口");
 	$channelid = $conf['transfer_wxpay'];
 }
 if($wechatid){
@@ -80,8 +80,7 @@ if($is_alipay){
 	}
 }else{
 	try{
-		$tools = new \WeChatPay\JsApiTool($wxinfo['appid'], $wxinfo['appsecret']);
-		$openId = $tools->GetOpenid();
+		$openId = wechat_oauth($wxinfo);
 	}catch(Exception $e){
 		sysmsg($e->getMessage());
 	}

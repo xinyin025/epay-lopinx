@@ -5,7 +5,7 @@ create table `pre_config` (
 PRIMARY KEY  (`k`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
-INSERT INTO `pre_config` VALUES ('version', '2038');
+INSERT INTO `pre_config` VALUES ('version', '2055');
 INSERT INTO `pre_config` VALUES ('admin_user', 'admin');
 INSERT INTO `pre_config` VALUES ('admin_pwd', '123456');
 INSERT INTO `pre_config` VALUES ('admin_paypwd', '123456');
@@ -61,7 +61,8 @@ INSERT INTO `pre_config` VALUES ('recharge', '1');
 INSERT INTO `pre_config` VALUES ('pageordername', '1');
 INSERT INTO `pre_config` VALUES ('notifyordername', '1');
 INSERT INTO `pre_config` VALUES ('user_refund', '1');
-INSERT INTO `pre_config` VALUES ('cdnpublic', '4');
+INSERT INTO `pre_config` VALUES ('cdnpublic', '0');
+INSERT INTO `pre_config` VALUES ('ip_type', '2');
 
 
 DROP TABLE IF EXISTS `pre_cache`;
@@ -100,6 +101,7 @@ INSERT INTO `pre_type` VALUES (3, 'qqpay', 0, 'QQ钱包', 1);
 INSERT INTO `pre_type` VALUES (4, 'bank', 0, '网银支付', 0);
 INSERT INTO `pre_type` VALUES (5, 'jdpay', 0, '京东支付', 0);
 INSERT INTO `pre_type` VALUES (6, 'paypal', 0, 'PayPal', 0);
+INSERT INTO `pre_type` VALUES (7, 'douyinpay', 0, '抖音支付', 0);
 
 DROP TABLE IF EXISTS `pre_plugin`;
 CREATE TABLE `pre_plugin` (
@@ -107,8 +109,8 @@ CREATE TABLE `pre_plugin` (
   `showname` varchar(60) DEFAULT NULL,
   `author` varchar(60) DEFAULT NULL,
   `link` varchar(255) DEFAULT NULL,
-  `types` varchar(50) DEFAULT NULL,
-  `transtypes` varchar(50) DEFAULT NULL,
+  `types` varchar(500) DEFAULT NULL,
+  `transtypes` varchar(500) DEFAULT NULL,
  PRIMARY KEY (`name`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
@@ -130,6 +132,9 @@ CREATE TABLE `pre_channel` (
   `appwxa` int(11) DEFAULT NULL,
   `costrate` decimal(5,2) DEFAULT NULL,
   `config` text DEFAULT NULL,
+  `daymaxorder` int(10) DEFAULT 0,
+  `timestart` int(11) DEFAULT NULL,
+  `timestop` int(11) DEFAULT NULL,
  PRIMARY KEY (`id`),
  KEY `type` (`type`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
@@ -179,13 +184,13 @@ CREATE TABLE `pre_order` (
   `notify_url` varchar(255) DEFAULT NULL,
   `return_url` varchar(255) DEFAULT NULL,
   `param` varchar(255) DEFAULT NULL,
-  `addtime` datetime DEFAULT NULL,
+  `addtime` datetime NOT NULL,
   `endtime` datetime DEFAULT NULL,
   `date` date DEFAULT NULL,
   `domain` varchar(64) DEFAULT NULL,
   `domain2` varchar(64) DEFAULT NULL,
-  `ip` varchar(20) DEFAULT NULL,
-  `buyer` varchar(30) DEFAULT NULL,
+  `ip` varchar(50) DEFAULT NULL,
+  `buyer` varchar(100) DEFAULT NULL,
   `status` tinyint(1) NOT NULL DEFAULT '0',
   `notify` int(5) NOT NULL DEFAULT '0',
   `notifytime` datetime DEFAULT NULL,
@@ -199,10 +204,17 @@ CREATE TABLE `pre_order` (
   `payurl` varchar(500) DEFAULT NULL,
   `ext` text DEFAULT NULL,
   `version` tinyint(1) NOT NULL DEFAULT '0',
+  `bill_trade_no` varchar(150) DEFAULT NULL,
+  `bill_mch_trade_no` varchar(150) DEFAULT NULL,
+  `mobile` varchar(100) DEFAULT NULL,
+  `cert_info` varchar(300) DEFAULT NULL,
+  `province` varchar(2) DEFAULT NULL,
  PRIMARY KEY (`trade_no`),
  KEY `uid` (`uid`),
  KEY `out_trade_no` (`out_trade_no`,`uid`),
  KEY `api_trade_no` (`api_trade_no`),
+ KEY `bill_trade_no` (`bill_trade_no`),
+ KEY `bill_mch_trade_no` (`bill_mch_trade_no`),
  KEY `date` (`date`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
@@ -215,11 +227,10 @@ CREATE TABLE `pre_group` (
   `price` decimal(10,2) DEFAULT NULL,
   `sort` int(10) NOT NULL DEFAULT 0,
   `expire` int(10) NOT NULL DEFAULT 0,
-  `settle_open` tinyint(1) DEFAULT 0,
-  `settle_type` tinyint(1) DEFAULT 0,
-  `settle_rate` varchar(10) DEFAULT NULL,
   `config` text DEFAULT NULL,
   `settings` text DEFAULT NULL,
+  `visible` varchar(30) DEFAULT NULL,
+  `index` int(11) NOT NULL DEFAULT 0,
  PRIMARY KEY (`gid`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
@@ -241,6 +252,7 @@ CREATE TABLE `pre_user` (
   `alipay_uid` varchar(32) DEFAULT NULL,
   `qq_uid` varchar(32) DEFAULT NULL,
   `wx_uid` varchar(32) DEFAULT NULL,
+  `wxa_uid` varchar(32) DEFAULT NULL,
   `money` decimal(10,2) NOT NULL,
   `email` varchar(32) DEFAULT NULL,
   `phone` varchar(20) DEFAULT NULL,
@@ -271,7 +283,16 @@ CREATE TABLE `pre_user` (
   `publickey` varchar(500) DEFAULT NULL,
   `channelinfo` text DEFAULT NULL,
   `ordername` varchar(255) DEFAULT NULL,
-  `msgconfig` varchar(150) DEFAULT NULL,
+  `msgconfig` text DEFAULT NULL,
+  `remain_money` varchar(20) DEFAULT NULL,
+  `open_code` tinyint(1) NOT NULL DEFAULT '0',
+  `deposit` decimal(10,2) DEFAULT NULL,
+  `voice_order` tinyint(1) NOT NULL DEFAULT '0',
+  `voice_devid` varchar(30) DEFAULT NULL,
+  `print_order` tinyint(1) NOT NULL DEFAULT '0',
+  `print_config` varchar(300) DEFAULT NULL,
+  `pay_maxmoney` varchar(10) DEFAULT NULL,
+  `pay_minmoney` varchar(10) DEFAULT NULL,
  PRIMARY KEY (`uid`),
  KEY `email` (`email`),
  KEY `phone` (`phone`)
@@ -291,13 +312,17 @@ CREATE TABLE `pre_settle` (
   `addtime` datetime DEFAULT NULL,
   `endtime` datetime DEFAULT NULL,
   `status` tinyint(1) NOT NULL DEFAULT '0',
+  `transfer_no` varchar(64) DEFAULT NULL,
+  `transfer_channel` int(10) unsigned DEFAULT NULL,
   `transfer_status` tinyint(1) NOT NULL DEFAULT '0',
   `transfer_result` varchar(64) DEFAULT NULL,
   `transfer_date` datetime DEFAULT NULL,
+  `transfer_ext` text DEFAULT NULL,
   `result` varchar(64) DEFAULT NULL,
  PRIMARY KEY (`id`),
  KEY `uid` (`uid`),
- KEY `batch` (`batch`)
+ KEY `batch` (`batch`),
+ KEY `transfer_no` (`transfer_no`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
 DROP TABLE IF EXISTS `pre_log`;
@@ -306,10 +331,11 @@ CREATE TABLE `pre_log` (
   `uid` int(11) NOT NULL DEFAULT '0',
   `type` varchar(20) NULL,
   `date` datetime NOT NULL,
-  `ip` varchar(20) DEFAULT NULL,
+  `ip` varchar(50) DEFAULT NULL,
   `city` varchar(20) DEFAULT NULL,
   `data` text NULL,
-  PRIMARY KEY (`id`)
+  PRIMARY KEY (`id`),
+  KEY `logincheck` (`ip`,`date`,`uid`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
 DROP TABLE IF EXISTS `pre_record`;
@@ -347,7 +373,7 @@ CREATE TABLE `pre_regcode` (
   `code` varchar(32) NOT NULL,
   `to` varchar(32) DEFAULT NULL,
   `time` int(11) NOT NULL,
-  `ip` varchar(20) DEFAULT NULL,
+  `ip` varchar(50) DEFAULT NULL,
   `status` tinyint(1) NOT NULL DEFAULT '0',
   `errcount` int(11) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`),
@@ -383,6 +409,8 @@ DROP TABLE IF EXISTS `pre_psreceiver`;
 CREATE TABLE `pre_psreceiver` (
   `id` int(11) unsigned NOT NULL auto_increment,
   `channel` int(11) NOT NULL,
+  `subchannel` int(11) DEFAULT NULL,
+  `mode` tinyint(1) NOT NULL DEFAULT '0',
   `uid` int(11) DEFAULT NULL,
   `account` varchar(128) NOT NULL,
   `name` varchar(50) DEFAULT NULL,
@@ -390,6 +418,7 @@ CREATE TABLE `pre_psreceiver` (
   `minmoney` varchar(10) DEFAULT NULL,
   `status` tinyint(1) NOT NULL DEFAULT '0',
   `addtime` datetime DEFAULT NULL,
+  `info` varchar(1024) DEFAULT NULL,
  PRIMARY KEY (`id`),
  KEY `channel` (`channel`,`uid`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
@@ -400,35 +429,18 @@ CREATE TABLE `pre_psorder` (
   `rid` int(11) NOT NULL,
   `trade_no` char(19) NOT NULL,
   `api_trade_no` varchar(150) NOT NULL,
+  `sub_trade_no` varchar(25) DEFAULT NULL,
   `settle_no` varchar(150) DEFAULT NULL,
   `money` decimal(10,2) NOT NULL,
   `status` tinyint(1) NOT NULL DEFAULT '0',
   `result` text DEFAULT NULL,
   `addtime` datetime DEFAULT NULL,
+  `delay` tinyint(1) NOT NULL DEFAULT '0',
+  `retry` tinyint(1) NOT NULL DEFAULT '0',
+  `rdata` text DEFAULT NULL,
  PRIMARY KEY (`id`),
- KEY `trade_no` (`trade_no`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8;
-
-DROP TABLE IF EXISTS `pre_psreceiver2`;
-CREATE TABLE `pre_psreceiver2` (
-  `id` int(11) unsigned NOT NULL auto_increment,
-  `channel` int(11) NOT NULL,
-  `uid` int(11) DEFAULT NULL,
-  `bank_type` tinyint(4) NOT NULL,
-  `card_id` varchar(128) NOT NULL,
-  `card_name` varchar(128) NOT NULL,
-  `tel_no` varchar(20) NOT NULL,
-  `cert_id` varchar(30) DEFAULT NULL,
-  `bank_code` varchar(20) DEFAULT NULL,
-  `prov_code` varchar(20) DEFAULT NULL,
-  `area_code` varchar(20) DEFAULT NULL,
-  `settleid` varchar(50) DEFAULT NULL,
-  `rate` varchar(10) DEFAULT NULL,
-  `minmoney` varchar(10) DEFAULT NULL,
-  `status` tinyint(1) NOT NULL DEFAULT '0',
-  `addtime` datetime DEFAULT NULL,
- PRIMARY KEY (`id`),
- KEY `channel` (`channel`,`uid`)
+ KEY `trade_no` (`trade_no`),
+ KEY `addtime` (`addtime`,`delay`,`status`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
 DROP TABLE IF EXISTS `pre_subchannel`;
@@ -504,6 +516,7 @@ CREATE TABLE `pre_wxkflog` (
 DROP TABLE IF EXISTS `pre_transfer`;
 CREATE TABLE `pre_transfer` (
   `biz_no` char(19) NOT NULL,
+  `out_biz_no` varchar(150) NOT NULL DEFAULT '',
   `pay_order_no` varchar(80) DEFAULT NULL,
   `uid` int(11) NOT NULL,
   `type` varchar(10) NOT NULL,
@@ -512,13 +525,16 @@ CREATE TABLE `pre_transfer` (
   `username` varchar(128) DEFAULT NULL,
   `money` decimal(10,2) NOT NULL,
   `costmoney` decimal(10,2) DEFAULT NULL,
+  `addtime` datetime DEFAULT NULL,
   `paytime` datetime DEFAULT NULL,
   `status` tinyint(1) NOT NULL DEFAULT '0',
   `api` tinyint(1) NOT NULL DEFAULT '0',
   `desc` varchar(80) DEFAULT NULL,
   `result` varchar(80) DEFAULT NULL,
+  `ext` text DEFAULT NULL,
  PRIMARY KEY (`biz_no`),
- KEY `uid` (`uid`)
+ KEY `uid` (`uid`),
+ KEY `out_biz_no` (`out_biz_no`,`uid`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
 DROP TABLE IF EXISTS `pre_invitecode`;
@@ -546,5 +562,18 @@ CREATE TABLE `pre_refundorder` (
   `endtime` datetime DEFAULT NULL,
  PRIMARY KEY (`refund_no`),
  KEY `out_refund_no` (`out_refund_no`,`uid`),
+ KEY `trade_no` (`trade_no`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
+DROP TABLE IF EXISTS `pre_suborder`;
+CREATE TABLE `pre_suborder` (
+  `sub_trade_no` varchar(25) NOT NULL,
+  `trade_no` char(19) NOT NULL,
+  `api_trade_no` varchar(150) DEFAULT NULL,
+  `money` decimal(10,2) NOT NULL,
+  `refundmoney` decimal(10,2) DEFAULT NULL,
+  `status` tinyint(1) NOT NULL DEFAULT '0',
+  `settle` tinyint(1) NOT NULL DEFAULT '0',
+ PRIMARY KEY (`sub_trade_no`),
  KEY `trade_no` (`trade_no`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;

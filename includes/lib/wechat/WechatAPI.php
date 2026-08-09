@@ -7,6 +7,7 @@ class WechatAPI
 {
     private $wid;
     private $accessToken;
+    private $jsapiTicket;
 
     public function __construct($id)
     {
@@ -67,6 +68,38 @@ class WechatAPI
         }
     }
 
+    public function generate_link($path, $query, $expire = 600)
+    {
+        $access_token = $this->getAccessToken();
+        $url = "https://api.weixin.qq.com/wxa/generate_urllink?access_token=".$access_token;
+        $data = ['path'=>$path, 'query'=>$query];
+        if($expire>0){
+            $data['expire_type'] = 0;
+            $data['expire_time'] = time()+$expire;
+        }
+        $output = get_curl($url, json_encode($data));
+        $res = json_decode($output, true);
+        if ($res && $res['errcode'] == 0) {
+            return $res['url_link'];
+        }else{
+            throw new Exception('url_link生成失败：'.$res['errmsg']);
+        }
+    }
+
+    public function getPhoneNumber($code)
+    {
+        $access_token = $this->getAccessToken();
+        $url = "https://api.weixin.qq.com/wxa/business/getuserphonenumber?access_token=".$access_token;
+        $data = ['code'=>$code];
+        $output = get_curl($url, json_encode($data));
+        $res = json_decode($output, true);
+        if ($res && $res['errcode'] == 0) {
+            return $res['phone_info'];
+        }else{
+            throw new Exception('获取手机号码失败：'.$res['errmsg']);
+        }
+    }
+
     //发送微信公众号模板消息
     public function sendTemplateMessage($openid, $template_id, $jumpurl, $data){
         $access_token = $this->getAccessToken();
@@ -83,6 +116,85 @@ class WechatAPI
             return true;
         }else{
             throw new Exception('模板消息发送失败：'.$res['errmsg']);
+        }
+    }
+
+    public function getJsapiTicket($force = false)
+    {
+        global $CACHE;
+        if(!empty($this->jsapiTicket)) return $this->jsapiTicket;
+
+        $cachekey = 'wx_jsapi_ticket_'.$this->wid;
+        $row = $CACHE->read($cachekey);
+        if($row){
+            $row = unserialize($row);
+            if($row['ticket'] && strtotime($row['expiretime']) - 200 >= time() && !$force){
+                $this->jsapiTicket = $row['ticket'];
+                return $this->jsapiTicket;
+            }
+        }
+
+        $access_token = $this->getAccessToken();
+        $url = 'https://api.weixin.qq.com/cgi-bin/ticket/getticket?access_token='.$access_token.'&type=jsapi';
+        $output = get_curl($url);
+        $res = json_decode($output, true);
+        if (isset($res['ticket'])) {
+            $this->jsapiTicket = $res['ticket'];
+            $expire_time = time() + $res['expires_in'];
+            $CACHE->save($cachekey, ['ticket'=>$this->jsapiTicket, 'expiretime'=>date("Y-m-d H:i:s", $expire_time)], $res['expires_in']);
+        }elseif(isset($res['errmsg'])){
+            throw new Exception('JsapiTicket获取失败：'.$res['errmsg']);
+        }else{
+            throw new Exception('JsapiTicket获取失败');
+        }
+    }
+
+    public function getJsapiConfig($appid, $url, $jsApiList, $debug = false)
+    {
+        $ticket = $this->getJsapiTicket();
+        $data = [
+            'jsapi_ticket' => $ticket,
+            'timestamp' => time(),
+            'noncestr' => random(16),
+            'url' => $url
+        ];
+        $config = [
+            'debug' => $debug,
+            'appId' => $appid,
+            'timestamp' => $data['timestamp'],
+            'nonceStr' => $data['noncestr'],
+            'signature' => $this->getSignature($data),
+            'jsApiList' => $jsApiList
+        ];
+        return $config;
+    }
+
+    public function getSignature($data)
+    {
+        ksort($data);
+        $params = array();
+        foreach ($data as $key => $value) {
+            $params[] = "{$key}={$value}";
+        }
+        return sha1(join('&', $params));
+    }
+
+    //发送客服消息
+    public function sendCustomMessage($openid, $msgtype, $content)
+    {
+        $access_token = $this->getAccessToken();
+        $url = 'https://api.weixin.qq.com/cgi-bin/message/custom/send?access_token='.$access_token;
+        $data = [
+            'touser' => $openid,
+            'msgtype' => $msgtype,
+            $msgtype => $content
+        ];
+        $output = get_curl($url, json_encode($data, JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES));
+        $res = json_decode($output, true);
+        if ($res && $res['errcode'] == 0) {
+            return true;
+        }else{
+            throw new Exception('发送客服消息失败：'.$res['errmsg']);
         }
     }
 }

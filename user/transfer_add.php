@@ -22,15 +22,6 @@ include './head.php';
 
 if(!$conf['user_transfer']) showmsg('未开启代付功能');
 
-if($conf['settle_type']==1){
-	$today=date("Y-m-d").' 00:00:00';
-	$order_today=$DB->getColumn("SELECT SUM(realmoney) from pre_order where uid={$uid} and tid<>2 and status=1 and endtime>='$today'");
-	if(!$order_today) $order_today = 0;
-	$enable_money=round($userrow['money']-$order_today,2);
-	if($enable_money<0)$enable_money=0;
-}else{
-	$enable_money=$userrow['money'];
-}
 if(!$conf['transfer_rate'])$conf['transfer_rate'] = $conf['settle_rate'];
 
 $app = isset($_GET['app'])?$_GET['app']:'alipay';
@@ -41,6 +32,7 @@ if(isset($_POST['submit'])){
 	$payee_account = htmlspecialchars(trim($_POST['payee_account']));
 	$payee_real_name = htmlspecialchars(trim($_POST['payee_real_name']));
 	$money = trim($_POST['money']);
+	$title = isset($_POST['title'])?htmlspecialchars(trim($_POST['title'])):'';
 	$desc = htmlspecialchars(trim($_POST['desc']));
 	$pwd = trim($_POST['paypwd']);
 	$pwdenc = getMd5Pwd($pwd, $userrow['uid']);
@@ -50,55 +42,45 @@ if(isset($_POST['submit'])){
 	if($desc && mb_strlen($desc)>32)showmsg('转账备注最多32个字',3);
 	if(!is_numeric($money) || !preg_match('/^[0-9.]+$/', $money) || $money<=0)showmsg('转账金额输入不规范',3);
 	$need_money = round($money + $money*$conf['transfer_rate']/100,2);
-	if($need_money>$enable_money)showmsg('需支付金额大于可转账余额',3);
-	if($conf['transfer_minmoney']>0 && $money<$conf['transfer_minmoney'])showmsg('单笔最小代付金额限制为'.$conf['transfer_minmoney'].'元',3);
-	if($conf['transfer_maxmoney']>0 && $money>$conf['transfer_maxmoney'])showmsg('单笔最大代付金额限制为'.$conf['transfer_maxmoney'].'元',3);
 	if($userrow['settle']==0)showmsg('您的商户出现异常，无法使用代付功能',3);
-	if($conf['transfer_maxlimit']>0){
-		$a_count = $DB->getColumn('SELECT count(*) FROM pre_transfer WHERE uid=:uid AND type=:type AND account=:account AND paytime>=:paytime', [':uid'=>$uid, ':type'=>$app, ':account'=>$account, ':paytime'=>date('Y-m-d').' 00:00:00']);
-		if($a_count >= $conf['transfer_maxlimit']){
-			showmsg('您今天向该账号的转账次数已达到上限',3);
-		}
-	}
 
-	if($app=='alipay'){
-		$channelid = $conf['transfer_alipay'];
-	}elseif($app=='wxpay'){
-		$channelid = $conf['transfer_wxpay'];
-	}elseif($app=='qqpay'){
-		if (!is_numeric($payee_account) || strlen($payee_account)<6 || strlen($payee_account)>10)showmsg('QQ号码格式错误',3);
-		$channelid = $conf['transfer_qqpay'];
-	}elseif($app=='bank'){
-		$channelid = $conf['transfer_bank'];
-	}else{
-		showmsg('参数错误',4);
-	}
-
-	$channel = \lib\Channel::get($channelid, $userrow['channelinfo']);
-	if(!$channel)showmsg('当前支付通道信息不存在',4);
-	
-	$result = \lib\Transfer::submit($app, $channel, $out_biz_no, $payee_account, $payee_real_name, $money, $desc);
+	$result = \lib\Transfer::add($uid, $app, $out_biz_no, $payee_account, $payee_real_name, $money, $title, $desc);
 
 	if($result['code']==0){
-		$data = ['biz_no'=>$out_biz_no, 'uid'=>$uid, 'type'=>$app, 'channel'=>$channelid, 'account'=>$payee_account, 'username'=>$payee_real_name, 'money'=>$money, 'costmoney'=>$need_money, 'paytime'=>'NOW()', 'pay_order_no'=>$result['orderid'], 'status'=>$result['status'], 'desc'=>$desc];
-		if($DB->insert('transfer', $data)!==false){
-			changeUserMoney($uid, $need_money, false, '代付');
-		}
 		if($result['status'] == 1){
 			$result='转账成功！转账单据号:'.$result['orderid'].' 支付时间:'.$result['paydate'];
+		}elseif($result['status'] == 3){
+			$result='提交成功！请等待管理员审核转账。';
+		}elseif(isset($result['wxpackage'])){
+			$result='提交成功！请在付款记录页面扫描二维码确认收款，1天内未确认，将退还给商家。转账单据号:'.$result['orderid'].' 支付时间:'.$result['paydate'];
 		}else{
 			$result='提交成功！转账处理中，请稍后在代付管理页面查看结果。转账单据号:'.$result['orderid'].' 支付时间:'.$result['paydate'];
 		}
 		$_SESSION['transfer_desc'] = $desc;
 		showmsg($result,1,'./transfer.php');
 	}else{
-		$result='转账失败，接口返回错误信息：'.$result['msg'];
+		$result='转账失败，'.$result['msg'];
 		showmsg($result,4);
 	}
 }
 
 $out_biz_no = date("YmdHis").rand(11111,99999);
 $desc = $_SESSION['transfer_desc'];
+
+if($conf['settle_type']==1){
+	$today=date("Y-m-d").' 00:00:00';
+	$order_today=$DB->getColumn("SELECT SUM(realmoney) from pre_order where uid={$uid} and tid<>2 and status=1 and endtime>='$today'");
+	if(!$order_today) $order_today = 0;
+	$enable_money=round($userrow['money']-$order_today,2);
+	if($enable_money<0)$enable_money=0;
+}else{
+	$enable_money=$userrow['money'];
+}
+
+$copy = [];
+if(isset($_GET['copy'])){
+	$copy = $DB->find('transfer', '*', ['biz_no'=>trim($_GET['copy'])]);
+}
 ?>
 	<div class="panel panel-default">
 		<div class="panel-heading font-bold">
@@ -106,14 +88,15 @@ $desc = $_SESSION['transfer_desc'];
 		</div>
 		<div class="panel-body">
 			<ul class="nav nav-tabs">
-				<?php if($conf['transfer_alipay']>0){?><li class="<?php echo $app=='alipay'?'active':null;?>"><a href="?app=alipay">支付宝</a></li><?php }?>
-				<?php if($conf['transfer_wxpay']>0){?><li class="<?php echo $app=='wxpay'?'active':null;?>"><a href="?app=wxpay">微信</a></li><?php }?>
-				<?php if($conf['transfer_qqpay']>0){?><li class="<?php echo $app=='qqpay'?'active':null;?>"><a href="?app=qqpay">QQ钱包</a></li><?php }?>
-				<?php if($conf['transfer_bank']>0){?><li class="<?php echo $app=='bank'?'active':null;?>"><a href="?app=bank">银行卡</a></li><?php }?>
+				<?php if($conf['transfer_alipay']>0 || $conf['transfer_alipay']==-1){?><li class="<?php echo $app=='alipay'?'active':null;?>"><a href="?app=alipay">支付宝</a></li><?php }?>
+				<?php if($conf['transfer_wxpay']>0 || $conf['transfer_wxpay']==-1){?><li class="<?php echo $app=='wxpay'?'active':null;?>"><a href="?app=wxpay">微信</a></li><?php }?>
+				<?php if($conf['transfer_qqpay']>0 || $conf['transfer_qqpay']==-1){?><li class="<?php echo $app=='qqpay'?'active':null;?>"><a href="?app=qqpay">QQ钱包</a></li><?php }?>
+				<?php if($conf['transfer_bank']>0 || $conf['transfer_bank']==-1){?><li class="<?php echo $app=='bank'?'active':null;?>"><a href="?app=bank">银行卡</a></li><?php }?>
 			</ul>
 
 			<div class="tab-pane active" id="alipay">
           <form action="?app=<?php echo $app?>" method="POST" role="form">
+			<input type="hidden" name="type" value="<?php echo $app?>"/>
 			<input type="hidden" name="rate" value="<?php echo $conf['transfer_rate']?>"/>
 			<div class="form-group">
 				<div class="input-group"><div class="input-group-addon">交易号</div>
@@ -122,39 +105,45 @@ $desc = $_SESSION['transfer_desc'];
 <?php if($app=='alipay'){?>
 			<div class="form-group">
 				<div class="input-group"><div class="input-group-addon">支付宝账号</div>
-				<input type="text" name="payee_account" value="" class="form-control" required placeholder="支付宝登录账号或支付宝UID"/>
+				<input type="text" name="payee_account" value="<?php echo $copy['account']?>" class="form-control" required placeholder="支付宝登录账号或支付宝UID"/>
+				<div class="input-group-btn"><button type="button" class="btn btn-default recent-payer-btn" data-type="alipay"><i class="fa fa-address-book"/></i></button></div>
 			</div></div>
 			<div class="form-group">
 				<div class="input-group"><div class="input-group-addon">支付宝姓名</div>
-				<input type="text" name="payee_real_name" value="" class="form-control" placeholder="不填写则不校验真实姓名"/>
+				<input type="text" name="payee_real_name" value="<?php echo $copy['username']?>" class="form-control" placeholder="不填写则不校验真实姓名"/>
 			</div></div>
 <?php }elseif($app=='wxpay'){?>
 			<div class="form-group">
 				<div class="input-group"><div class="input-group-addon">Openid</div>
-				<input type="text" name="payee_account" value="" class="form-control" required placeholder="只能填写微信Openid"/>
-				<div class="input-group-btn"><a id="getopenid" class="btn btn-default">获取</a></div>
+				<input type="text" name="payee_account" value="<?php echo $copy['account']?>" class="form-control" required placeholder="只能填写微信Openid"/>
+				<div class="input-group-btn">
+					<button type="button" class="btn btn-default recent-payer-btn" data-type="wxpay"><i class="fa fa-address-book"/></i></button>
+					<a id="getopenid" class="btn btn-default">获取</a>
+				</div>
 			</div></div>
 			<div class="form-group">
 				<div class="input-group"><div class="input-group-addon">真实姓名</div>
-				<input type="text" name="payee_real_name" value="" class="form-control" placeholder="不填写则不校验真实姓名"/>
+				<input type="text" name="payee_real_name" value="<?php echo $copy['username']?>" class="form-control" placeholder="不填写则不校验真实姓名"/>
 			</div></div>
 <?php }elseif($app=='qqpay'){?>
 			<div class="form-group">
 				<div class="input-group"><div class="input-group-addon">收款方QQ</div>
-				<input type="text" name="payee_account" value="" class="form-control" required/>
+				<input type="text" name="payee_account" value="<?php echo $copy['account']?>" class="form-control" required/>
+				<div class="input-group-btn"><button type="button" class="btn btn-default recent-payer-btn" data-type="bank"><i class="fa fa-address-book"/></i></button></div>
 			</div></div>
 			<div class="form-group">
 				<div class="input-group"><div class="input-group-addon">真实姓名</div>
-				<input type="text" name="payee_real_name" value="" class="form-control" placeholder="不填写则不校验真实姓名"/>
+				<input type="text" name="payee_real_name" value="<?php echo $copy['username']?>" class="form-control" placeholder="不填写则不校验真实姓名"/>
 			</div></div>
 <?php }elseif($app=='bank'){?>
 			<div class="form-group">
 				<div class="input-group"><div class="input-group-addon">银行卡号</div>
-				<input type="text" name="payee_account" value="" class="form-control" required placeholder="收款方银行卡号"/>
+				<input type="text" name="payee_account" value="<?php echo $copy['account']?>" class="form-control" required placeholder="收款方银行卡号"/>
+				<div class="input-group-btn"><button type="button" class="btn btn-default recent-payer-btn" data-type="bank"><i class="fa fa-address-book"/></i></button></div>
 			</div></div>
 			<div class="form-group">
 				<div class="input-group"><div class="input-group-addon">姓名</div>
-				<input type="text" name="payee_real_name" value="" class="form-control" placeholder="收款方银行账户名称"/>
+				<input type="text" name="payee_real_name" value="<?php echo $copy['username']?>" class="form-control" placeholder="收款方银行账户名称"/>
 			</div></div>
 <?php }?>
 			<div class="form-group">
@@ -195,7 +184,7 @@ $desc = $_SESSION['transfer_desc'];
 </div>
 </div>
 <?php include 'foot.php';?>
-<script src="<?php echo $cdnpublic?>layer/3.1.1/layer.min.js"></script>
+<script src="<?php echo $cdnpublic?>layer/3.1.1/layer.js"></script>
 <script src="<?php echo $cdnpublic?>jquery.qrcode/1.0/jquery.qrcode.min.js"></script>
 <script>
 function showneed(){
@@ -227,7 +216,94 @@ function checkopenid(){
 		}
 	});
 }
+
+function saveRecentPayer(type, account, name) {
+	var key = 'recent_payers_' + type;
+	var payers = JSON.parse(localStorage.getItem(key) || '[]');
+	
+	payers = payers.filter(function(payer) {
+		return payer.account !== account;
+	});
+	
+	payers.unshift({
+		account: account,
+		name: name,
+		timestamp: new Date().getTime()
+	});
+
+	if (payers.length > 5) {
+		payers = payers.slice(0, 5);
+	}
+	
+	localStorage.setItem(key, JSON.stringify(payers));
+}
+
+function getRecentPayers(type) {
+	var key = 'recent_payers_' + type;
+	return JSON.parse(localStorage.getItem(key) || '[]');
+}
+
+function showRecentPayers(type) {
+	var payers = getRecentPayers(type);
+	
+	if (payers.length === 0) {
+		layer.msg('暂无最近付款记录');
+		return;
+	}
+	
+	var html = '<div class="recent-payers-popup">';
+	html += '<h4 style="margin:15px;">最近付款人</h4>';
+	html += '<div class="list-group" style="max-height:300px;overflow-y:auto;">';
+	
+	payers.forEach(function(payer, index) {
+		html += '<a href="javascript:void(0)" class="list-group-item payer-item" data-account="' + payer.account + '" data-name="' + (payer.name || '') + '">';
+		html += '<div><strong>' + payer.account + '</strong></div>';
+		if (payer.name) {
+			html += '<div style="font-size:12px;color:#666;">' + payer.name + '</div>';
+		}
+		html += '</a>';
+	});
+	
+	html += '</div></div>';
+	
+	layer.open({
+		type: 1,
+		title: false,
+		closeBtn: 1,
+		area: ['400px', 'auto'],
+		shadeClose: true,
+		content: html,
+		success: function(layero) {
+			$(layero).find('.payer-item').on('click', function() {
+				var account = $(this).data('account');
+				var name = $(this).data('name');
+				
+				$('input[name="payee_account"]').val(account);
+				if (name) {
+					$('input[name="payee_real_name"]').val(name);
+				}
+				
+				layer.closeAll();
+			});
+		}
+	});
+}
+
 $(document).ready(function(){
+	$('.recent-payer-btn').on('click', function() {
+		var type = $(this).data('type');
+		showRecentPayers(type);
+	});
+
+	$('form').on('submit', function() {
+		var type = $('input[name="type"]').val();
+		var account = $('input[name="payee_account"]').val();
+		var name = $('input[name="payee_real_name"]').val();
+		
+		if (account) {
+			saveRecentPayer(type, account, name);
+		}
+	});
 	$("input[name='money']").blur(function(){
 		showneed()
 	});

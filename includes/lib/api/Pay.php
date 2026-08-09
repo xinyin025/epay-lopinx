@@ -19,7 +19,7 @@ class Pay
         
         $pid=intval($queryArr['pid']);
         if(empty($pid))sysmsg('商户ID不能为空');
-        $userrow=$DB->getRow("SELECT `uid`,`gid`,`key`,`money`,`mode`,`pay`,`cert`,`status`,`channelinfo`,`qq`,`ordername`,`keytype`,`publickey` FROM `pre_user` WHERE `uid`='{$pid}' LIMIT 1");
+        $userrow=$DB->getRow("SELECT `uid`,`gid`,`key`,`money`,`mode`,`pay`,`cert`,`status`,`channelinfo`,`qq`,`ordername`,`keytype`,`publickey`,`deposit`,`pay_minmoney`,`pay_maxmoney` FROM `pre_user` WHERE `uid`='{$pid}' LIMIT 1");
         if(!$userrow)sysmsg('商户不存在！');
         if(isset($queryArr['__defend'])){
             $defend_result = $queryArr['__defend'];
@@ -44,6 +44,10 @@ class Pay
         $money=daddslashes($queryArr['money']);
         $sitename=urlencode(base64_encode(htmlspecialchars($queryArr['sitename'])));
         $param=isset($queryArr['param'])?htmlspecialchars(daddslashes($queryArr['param'])):null;
+        $channel_id=isset($queryArr['channel_id'])?intval($queryArr['channel_id']):null;
+        $cert_no=isset($queryArr['cert_no'])?htmlspecialchars($queryArr['cert_no']):null;
+        $cert_name=isset($queryArr['cert_name'])?htmlspecialchars($queryArr['cert_name']):null;
+        $min_age=isset($queryArr['min_age'])?daddslashes($queryArr['min_age']):null;
 
 
         if(empty($out_trade_no))sysmsg('订单号(out_trade_no)不能为空');
@@ -51,10 +55,23 @@ class Pay
         if(empty($return_url))sysmsg('回调地址(return_url)不能为空');
         if(empty($name))sysmsg('商品名称(name)不能为空');
         if(empty($money))sysmsg('金额(money)不能为空');
+        if(!preg_match('/^[a-zA-Z0-9.\_\-|]+$/',$out_trade_no))sysmsg('订单号(out_trade_no)格式不正确');
         if($money<=0 || !is_numeric($money) || !preg_match('/^[0-9.]+$/', $money))sysmsg('金额不合法');
+        if(!is_url($notify_url))sysmsg('通知地址(notify_url)格式不正确');
+        if(!empty($cert_no) && !is_idcard($cert_no)) sysmsg('身份证号码格式不正确');
+        if(!empty($min_age) && (!is_numeric($min_age) || $min_age < 0)) sysmsg('最低年龄格式不正确');
+        $cert_info = null;
+        if(!empty($cert_no) || !empty($cert_name) || !empty($min_age)){
+            $cert_info = json_encode(['cert_no'=>$cert_no, 'cert_name'=>$cert_name, 'min_age'=>$min_age], JSON_UNESCAPED_UNICODE);
+        }
+
+        $groupconfig = getGroupConfig($userrow['gid']);
+        $conf = array_merge($conf, $groupconfig);
+
         if($conf['pay_maxmoney']>0 && $money>$conf['pay_maxmoney'])sysmsg('最大支付金额是'.$conf['pay_maxmoney'].'元');
         if($conf['pay_minmoney']>0 && $money<$conf['pay_minmoney'])sysmsg('最小支付金额是'.$conf['pay_minmoney'].'元');
-        if(!preg_match('/^[a-zA-Z0-9.\_\-|]+$/',$out_trade_no))sysmsg('订单号(out_trade_no)格式不正确');
+        if($userrow['pay_maxmoney']>0 && $money>$userrow['pay_maxmoney'])sysmsg('最大支付金额是'.$userrow['pay_maxmoney'].'元');
+        if($userrow['pay_minmoney']>0 && $money<$userrow['pay_minmoney'])sysmsg('最小支付金额是'.$userrow['pay_minmoney'].'元');
 
         $domain=getdomain($notify_url);
 
@@ -67,6 +84,19 @@ class Pay
         if($conf['pay_domain_forbid']==1){
             if(!$DB->getRow("SELECT * FROM pre_domain WHERE uid=:uid AND (domain=:domain OR domain=:domain2) AND status=1 LIMIT 1", [':uid'=>$pid, ':domain'=>get_host($notify_url), ':domain2'=>'*.'.get_main_host($notify_url)])){
                 sysmsg('该域名不可发起支付，原因：域名没过白，请前往支付平台授权支付域名');
+            }
+        }
+        if($conf['user_deposit']==1 && $conf['user_deposit_min'] > 0 && $conf['user_deposit_min'] > $userrow['deposit']){
+            sysmsg('商户保证金不足，请前往支付平台充值保证金后再发起支付');
+        }
+        if(!empty($conf['pay_region_block'])){
+            $ipregion = get_ip_region($clientip);
+            if($ipregion){
+                foreach(explode('|',$conf['pay_region_block']) as $rows){
+                    if(strpos($ipregion, $rows) !== false){
+                        sysmsg('您所在的地区无法发起支付，请更换其他支付方式');
+                    }
+                }
             }
         }
 
@@ -83,8 +113,14 @@ class Pay
         $blackip = $DB->find('blacklist', '*', ['type'=>1, 'content'=>$clientip], null, 1);
         if($blackip)sysmsg('系统异常无法完成付款');
 
-        if($conf['pay_iplimit'] > 0){
-            $ipcount = $DB->getColumn("select count(*) from pre_order where `ip`='$clientip' and `date`='".date('Y-m-d')."' and status>0");
+        if($conf['pay_daymax'] > 0){
+            $daytotal = $DB->getColumn("select sum(money) from pre_order where `uid`=:uid and `date`='".date('Y-m-d')."' and status>0", ['uid'=>$pid]);
+            if($daytotal + $money > $conf['pay_daymax']){
+                sysmsg('当前商户今日收款已达到限额，无法发起支付');
+            }
+        }
+        if($conf['pay_iplimit'] > 0 && (empty($conf['pay_iplimit_white']) || strpos($conf['pay_iplimit_white'], $clientip)===false)){
+            $ipcount = $DB->getColumn("select count(*) from pre_order where `ip`=:ip and `date`='".date('Y-m-d')."' and status>0", ['ip'=>$clientip]);
             if($ipcount >= $conf['pay_iplimit']){
                 sysmsg('你今天已无法再发起支付，请明天再试');
             }
@@ -93,6 +129,7 @@ class Pay
         if(checkPayVerifyOpen($pid)){
             $defend_key = getDefendKey($pid, $out_trade_no);
             if(empty($defend_result) || $defend_key!==substr($defend_result,10,32)){
+                if($conf['pay_verify_type'] == 3) sysmsg('当前商户已超出订单并发量限制，请稍后再试');
                 showPayVerifyPage($defend_key, $queryArr);
             }
         }
@@ -116,20 +153,20 @@ class Pay
         }else{
             $version = defined('API_INIT') ? 1 : 0;
             $trade_no=date("YmdHis").rand(11111,99999);
-            if(!$DB->exec("INSERT INTO `pre_order` (`trade_no`,`out_trade_no`,`uid`,`addtime`,`name`,`money`,`notify_url`,`return_url`,`param`,`domain`,`ip`,`status`,`version`) VALUES (:trade_no, :out_trade_no, :uid, NOW(), :name, :money, :notify_url, :return_url, :param, :domain, :clientip, 0, :version)", [':trade_no'=>$trade_no, ':out_trade_no'=>$out_trade_no, ':uid'=>$pid, ':name'=>$name, ':money'=>$money, ':notify_url'=>$notify_url, ':return_url'=>$return_url, ':domain'=>$domain, ':clientip'=>$clientip, ':param'=>$param, ':version'=>$version]))sysmsg('创建订单失败，请返回重试！');
+            if(!$DB->exec("INSERT INTO `pre_order` (`trade_no`,`out_trade_no`,`uid`,`addtime`,`name`,`money`,`notify_url`,`return_url`,`param`,`domain`,`ip`,`status`,`version`,`cert_info`) VALUES (:trade_no, :out_trade_no, :uid, NOW(), :name, :money, :notify_url, :return_url, :param, :domain, :clientip, 0, :version, :cert_info)", [':trade_no'=>$trade_no, ':out_trade_no'=>$out_trade_no, ':uid'=>$pid, ':name'=>$name, ':money'=>$money, ':notify_url'=>$notify_url, ':return_url'=>$return_url, ':domain'=>$domain, ':clientip'=>$clientip, ':param'=>$param, ':version'=>$version, 'cert_info'=>$cert_info]))sysmsg('创建订单失败，请返回重试！');
         }
 
 
         if(empty($type)){
-            echo "<script>window.location.replace('./cashier.php?trade_no={$trade_no}&sitename={$sitename}');</script>";
+            echo "<script>window.location.replace('/cashier.php?trade_no={$trade_no}&sitename={$sitename}');</script>";
             exit;
         }
 
         // 获取订单支付方式ID、支付插件、支付通道、支付费率
         if($firstGetChannel){
-            $submitData = \lib\Channel::submit($type, $userrow['uid'], $userrow['gid'], $money);
+            $submitData = \lib\Channel::submit($type, $userrow['uid'], $userrow['gid'], $money, $channel_id);
             if(!$submitData){
-                echo "<script>window.location.replace('./cashier.php?trade_no={$trade_no}&sitename={$sitename}&other=1');</script>";
+                echo "<script>window.location.replace('/cashier.php?trade_no={$trade_no}&sitename={$sitename}&other=1');</script>";
                 exit;
             }
             if($userrow['mode']==1){ //订单加费模式
@@ -167,6 +204,18 @@ class Pay
         if(!empty($submitData['paymax']) && $submitData['paymax']>0 && $money>$submitData['paymax']){
             sysmsg('<center>当前支付方式单笔最大限额为'.$submitData['paymax'].'元，请选择其他支付方式！</center>', '跳转提示');
         }
+        if(!empty($submitData['timestart']) && !empty($submitData['timestop'])){
+            $hour = date('H');
+            if($submitData['timestart'] < $submitData['timestop']){
+                if($hour < $submitData['timestart'] || $hour > $submitData['timestop']) {
+                    sysmsg('<center>当前支付方式仅在每日'.$submitData['timestart'].':00-'.$submitData['timestop'].':00开放，请选择其他支付方式！</center>', '跳转提示');
+                }
+            }else{
+                if($hour < $submitData['timestart'] && $hour > $submitData['timestop']) {
+                    sysmsg('<center>当前支付方式仅在每日'.$submitData['timestart'].':00-'.$submitData['timestop'].':00开放，请选择其他支付方式！</center>', '跳转提示');
+                }
+            }
+        }
         // 商户直清模式判断商户余额
         if($submitData['mode']==1 && $realmoney-$getmoney>$userrow['money']){
             sysmsg('当前商户余额不足，无法完成支付，请商户登录用户中心充值余额');
@@ -174,9 +223,14 @@ class Pay
 
         if($firstGetChannel){
             // 随机增减金额
-            if(!empty($conf['pay_payaddstart'])&&$conf['pay_payaddstart']!=0&&!empty($conf['pay_payaddmin'])&&$conf['pay_payaddmin']!=0&&!empty($conf['pay_payaddmax'])&&$conf['pay_payaddmax']!=0&&$realmoney>=$conf['pay_payaddstart'])$realmoney = round($realmoney + randomFloat(round($conf['pay_payaddmin'],2),round($conf['pay_payaddmax'],2)), 2);
+            if(!empty($conf['pay_payaddstart'])&&$conf['pay_payaddstart']!=0&&!empty($conf['pay_payaddmin'])&&$conf['pay_payaddmin']!=0&&!empty($conf['pay_payaddmax'])&&$conf['pay_payaddmax']!=0&&$realmoney>=$conf['pay_payaddstart']){
+                $randmoney = randomFloat(round($conf['pay_payaddmin'],2),round($conf['pay_payaddmax'],2));
+                $realmoney = round($realmoney + $randmoney, 2);
+                if($submitData['mode']==1) $getmoney = round($getmoney + $randmoney, 2);
+            }
 
-            $DB->update('order', ['type'=>$submitData['typeid'], 'channel'=>$submitData['channel'], 'subchannel'=>$submitData['subchannel'], 'realmoney'=>$realmoney, 'getmoney'=>$getmoney], ['trade_no'=>$trade_no]);
+            $resCount = $DB->update('order', ['type'=>$submitData['typeid'], 'channel'=>$submitData['channel'], 'subchannel'=>$submitData['subchannel'], 'realmoney'=>$realmoney, 'getmoney'=>$getmoney], ['trade_no'=>$trade_no, 'channel'=>0]);
+            if($resCount == 0) sysmsg('更新订单失败，请返回重试！');
         }
 
 
@@ -185,13 +239,16 @@ class Pay
         $order['uid'] = $pid;
         $order['addtime'] = date('Y-m-d H:i:s');
         $order['name'] = $name;
-        $order['realmoney'] = $realmoney;
+        $order['realmoney'] = sprintf("%.2f", $realmoney);
         $order['type'] = $submitData['typeid'];
         $order['channel'] = $submitData['channel'];
         $order['subchannel'] = $submitData['subchannel'];
         $order['typename'] = $submitData['typename'];
+        $order['plugin'] = $submitData['plugin'];
         $order['profits'] = \lib\Payment::updateOrderProfits($order, $submitData['plugin']);
-        $order['profits2'] = \lib\Payment::updateOrderProfits2($order, $submitData['plugin']);
+        $order['cert_no'] = $cert_no;
+        $order['cert_name'] = $cert_name;
+        $order['min_age'] = $min_age;
 
         try{
             $result = \lib\Plugin::loadForSubmit($submitData['plugin'], $trade_no);
@@ -213,7 +270,7 @@ class Pay
 
         $pid=intval($queryArr['pid']);
         if(empty($pid))echojsonmsg('商户ID不能为空');
-        $userrow=$DB->getRow("SELECT `uid`,`gid`,`key`,`money`,`mode`,`pay`,`cert`,`status`,`channelinfo`,`qq`,`ordername`,`keytype`,`publickey` FROM `pre_user` WHERE `uid`='{$pid}' LIMIT 1");
+        $userrow=$DB->getRow("SELECT `uid`,`gid`,`key`,`money`,`mode`,`pay`,`cert`,`status`,`channelinfo`,`qq`,`ordername`,`keytype`,`publickey`,`deposit`,`pay_minmoney`,`pay_maxmoney` FROM `pre_user` WHERE `uid`='{$pid}' LIMIT 1");
         if(!$userrow)echojsonmsg('商户不存在！');
         
         try{
@@ -237,9 +294,11 @@ class Pay
         if(empty($device))$device = 'pc';
         $sub_openid=$queryArr['sub_openid'];
         $sub_appid=$queryArr['sub_appid'];
+        $is_applet=isset($queryArr['is_applet'])?intval($queryArr['is_applet']):0;
         $auth_code=$queryArr['auth_code'];
         $sitename=urlencode(base64_encode(htmlspecialchars($queryArr['sitename'])));
         $param=isset($queryArr['param'])?htmlspecialchars(daddslashes($queryArr['param'])):null;
+        $channel_id=isset($queryArr['channel_id'])?intval($queryArr['channel_id']):null;
         $method=$queryArr['method']; //web/jump/jsapi/scan
         if($device == 'jump')$method = 'jump';
         $mdevice='';
@@ -247,6 +306,9 @@ class Pay
             $mdevice=$device;
             $device='mobile';
         }
+        $cert_no=isset($queryArr['cert_no'])?htmlspecialchars($queryArr['cert_no']):null;
+        $cert_name=isset($queryArr['cert_name'])?htmlspecialchars($queryArr['cert_name']):null;
+        $min_age=isset($queryArr['min_age'])?daddslashes($queryArr['min_age']):null;
 
         if(empty($out_trade_no))echojsonmsg('订单号(out_trade_no)不能为空');
         if(empty($notify_url))echojsonmsg('通知地址(notify_url)不能为空');
@@ -254,17 +316,31 @@ class Pay
         if(empty($money))echojsonmsg('金额(money)不能为空');
         if(empty($type) && $method != 'scan')echojsonmsg('支付方式(type)不能为空');
         if(empty($clientip))echojsonmsg('用户IP地址(clientip)不能为空');
-        if($money<=0 || !is_numeric($money) || !preg_match('/^[0-9.]+$/', $money))echojsonmsg('金额不合法');
-        if($conf['pay_maxmoney']>0 && $money>$conf['pay_maxmoney'])echojsonmsg('最大支付金额是'.$conf['pay_maxmoney'].'元');
-        if($conf['pay_minmoney']>0 && $money<$conf['pay_minmoney'])echojsonmsg('最小支付金额是'.$conf['pay_minmoney'].'元');
         if(!preg_match('/^[a-zA-Z0-9.\_\-|]+$/',$out_trade_no))echojsonmsg('订单号(out_trade_no)格式不正确');
+        if($money<=0 || !is_numeric($money) || !preg_match('/^[0-9.]+$/', $money))echojsonmsg('金额不合法');
+        if(!filter_var($clientip, FILTER_VALIDATE_IP))echojsonmsg('用户IP地址不合法');
+        if(!is_url($notify_url))echojsonmsg('通知地址(notify_url)格式不正确');
         if($method == 'jsapi' && empty($sub_openid))echojsonmsg('jsapi支付时参数(sub_openid)不能为空');
-        if($method == 'jsapi' && $type=='wxpay' && empty($sub_appid))echojsonmsg('jsapi支付时参数(sub_appid)不能为空');
+        //if($method == 'jsapi' && $type=='wxpay' && empty($sub_appid))echojsonmsg('jsapi支付时参数(sub_appid)不能为空');
         if($method == 'scan' && empty($auth_code))echojsonmsg('付款码支付时授权码(auth_code)不能为空');
         if($method == 'scan' && empty($type)){
             $type = getScanPayType($auth_code);
             if($type == 'unknown') echojsonmsg('未知的付款码类型');
         }
+        if(!empty($cert_no) && !is_idcard($cert_no)) echojsonmsg('身份证号码格式不正确');
+        if(!empty($min_age) && (!is_numeric($min_age) || $min_age < 0)) echojsonmsg('最低年龄格式不正确');
+        $cert_info = null;
+        if(!empty($cert_no) || !empty($cert_name) || !empty($min_age)){
+            $cert_info = json_encode(['cert_no'=>$cert_no, 'cert_name'=>$cert_name, 'min_age'=>$min_age], JSON_UNESCAPED_UNICODE);
+        }
+
+        $groupconfig = getGroupConfig($userrow['gid']);
+        $conf = array_merge($conf, $groupconfig);
+
+        if($conf['pay_maxmoney']>0 && $money>$conf['pay_maxmoney'])echojsonmsg('最大支付金额是'.$conf['pay_maxmoney'].'元');
+        if($conf['pay_minmoney']>0 && $money<$conf['pay_minmoney'])echojsonmsg('最小支付金额是'.$conf['pay_minmoney'].'元');
+        if($userrow['pay_maxmoney']>0 && $money>$userrow['pay_maxmoney'])echojsonmsg('最大支付金额是'.$userrow['pay_maxmoney'].'元');
+        if($userrow['pay_minmoney']>0 && $money<$userrow['pay_minmoney'])echojsonmsg('最小支付金额是'.$userrow['pay_minmoney'].'元');
 
         $domain=getdomain($notify_url);
 
@@ -277,6 +353,19 @@ class Pay
         if($conf['pay_domain_forbid']==1){
             if(!$DB->getRow("SELECT * FROM pre_domain WHERE uid=:uid AND (domain=:domain OR domain=:domain2) AND status=1 LIMIT 1", [':uid'=>$pid, ':domain'=>get_host($notify_url), ':domain2'=>'*.'.get_main_host($notify_url)])){
                 echojsonmsg('该域名不可发起支付，原因：域名没过白，请前往支付平台授权支付域名');
+            }
+        }
+        if($conf['user_deposit']==1 && $conf['user_deposit_min'] > 0 && $conf['user_deposit_min'] > $userrow['deposit']){
+            echojsonmsg('商户保证金不足，请前往支付平台充值保证金后再发起支付');
+        }
+        if(!empty($conf['pay_region_block'])){
+            $ipregion = get_ip_region($clientip);
+            if($ipregion){
+                foreach(explode('|',$conf['pay_region_block']) as $rows){
+                    if(strpos($ipregion, $rows) !== false){
+                        echojsonmsg('您所在的地区无法发起支付，请更换其他支付方式');
+                    }
+                }
             }
         }
 
@@ -293,14 +382,21 @@ class Pay
         $blackip = $DB->find('blacklist', '*', ['type'=>1, 'content'=>$clientip], null, 1);
         if($blackip)echojsonmsg('系统异常无法完成付款');
 
-        if($conf['pay_iplimit'] > 0){
-            $ipcount = $DB->getColumn("select count(*) from pre_order where `ip`='$clientip' and `date`='".date('Y-m-d')."' and status>0");
+        if($conf['pay_daymax'] > 0){
+            $daytotal = $DB->getColumn("select sum(money) from pre_order where `uid`=:uid and `date`='".date('Y-m-d')."' and status>0", ['uid'=>$pid]);
+            if($daytotal + $money > $conf['pay_daymax']){
+                echojsonmsg('当前商户今日收款已达到限额，无法发起支付');
+            }
+        }
+        if($conf['pay_iplimit'] > 0 && (empty($conf['pay_iplimit_white']) || strpos($conf['pay_iplimit_white'], $clientip)===false)){
+            $ipcount = $DB->getColumn("select count(*) from pre_order where `ip`=:ip and `date`='".date('Y-m-d')."' and status>0", ['ip'=>$clientip]);
             if($ipcount >= $conf['pay_iplimit']){
                 echojsonmsg('你今天已无法再发起支付，请明天再试');
             }
         }
 
         if(checkPayVerifyOpen($pid)){
+            if($conf['pay_verify_type'] == 3) sysmsg('当前商户已超出订单并发量限制，请稍后再试');
             echojsonmsg('本次支付需要安全验证，请使用跳转支付接口发起支付');
         }
 
@@ -323,7 +419,7 @@ class Pay
         }else{
             $version = defined('API_INIT') ? 1 : 0;
             $trade_no=date("YmdHis").rand(11111,99999);
-            if(!$DB->exec("INSERT INTO `pre_order` (`trade_no`,`out_trade_no`,`uid`,`addtime`,`name`,`money`,`notify_url`,`return_url`,`param`,`domain`,`ip`,`status`,`version`) VALUES (:trade_no, :out_trade_no, :uid, NOW(), :name, :money, :notify_url, :return_url, :param, :domain, :clientip, 0, :version)", [':trade_no'=>$trade_no, ':out_trade_no'=>$out_trade_no, ':uid'=>$pid, ':name'=>$name, ':money'=>$money, ':notify_url'=>$notify_url, ':return_url'=>$return_url, ':domain'=>$domain, ':clientip'=>$clientip, ':param'=>$param, ':version'=>$version]))echojsonmsg('创建订单失败，请返回重试！');
+            if(!$DB->exec("INSERT INTO `pre_order` (`trade_no`,`out_trade_no`,`uid`,`addtime`,`name`,`money`,`notify_url`,`return_url`,`param`,`domain`,`ip`,`buyer`,`status`,`version`,`cert_info`) VALUES (:trade_no, :out_trade_no, :uid, NOW(), :name, :money, :notify_url, :return_url, :param, :domain, :clientip, :buyer, 0, :version, :cert_info)", [':trade_no'=>$trade_no, ':out_trade_no'=>$out_trade_no, ':uid'=>$pid, ':name'=>$name, ':money'=>$money, ':notify_url'=>$notify_url, ':return_url'=>$return_url, ':domain'=>$domain, ':clientip'=>$clientip, ':buyer'=>$sub_openid, ':param'=>$param, ':version'=>$version, ':cert_info'=>$cert_info]))echojsonmsg('创建订单失败，请返回重试！');
         }
 
         if(empty($type)){
@@ -333,7 +429,7 @@ class Pay
 
         // 获取订单支付方式ID、支付插件、支付通道、支付费率
         if($firstGetChannel){
-            $submitData = \lib\Channel::submit($type, $userrow['uid'], $userrow['gid'], $money);
+            $submitData = \lib\Channel::submit($type, $userrow['uid'], $userrow['gid'], $money, $channel_id);
             if(!$submitData){
                 define("TRADE_NO", $trade_no);
                 \lib\Payment::echoJson(['type'=>'jump','url'=>$siteurl.'cashier.php?trade_no='.$trade_no.'&sitename='.$sitename.'&other=1']);
@@ -373,6 +469,18 @@ class Pay
         if(!empty($submitData['paymax']) && $submitData['paymax']>0 && $money>$submitData['paymax']){
             echojsonmsg('当前支付方式单笔最大限额为'.$submitData['paymax'].'元，请选择其他支付方式！');
         }
+        if(!empty($submitData['timestart']) && !empty($submitData['timestop'])){
+            $hour = date('H');
+            if($submitData['timestart'] < $submitData['timestop']){
+                if($hour < $submitData['timestart'] || $hour > $submitData['timestop']) {
+                    echojsonmsg('当前支付方式仅在每日'.$submitData['timestart'].':00-'.$submitData['timestop'].':00开放，请选择其他支付方式！');
+                }
+            }else{
+                if($hour < $submitData['timestart'] && $hour > $submitData['timestop']) {
+                    echojsonmsg('当前支付方式仅在每日'.$submitData['timestart'].':00-'.$submitData['timestop'].':00开放，请选择其他支付方式！');
+                }
+            }
+        }
         // 商户直清模式判断商户余额
         if($submitData['mode']==1 && $realmoney-$getmoney>$userrow['money']){
             echojsonmsg('当前商户余额不足，无法完成支付，请商户登录用户中心充值余额');
@@ -380,9 +488,14 @@ class Pay
 
         if($firstGetChannel){
             // 随机增减金额
-            if(!empty($conf['pay_payaddstart'])&&$conf['pay_payaddstart']!=0&&!empty($conf['pay_payaddmin'])&&$conf['pay_payaddmin']!=0&&!empty($conf['pay_payaddmax'])&&$conf['pay_payaddmax']!=0&&$realmoney>=$conf['pay_payaddstart'])$realmoney = $realmoney + randomFloat(round($conf['pay_payaddmin'],2),round($conf['pay_payaddmax'],2));
+            if(!empty($conf['pay_payaddstart'])&&$conf['pay_payaddstart']!=0&&!empty($conf['pay_payaddmin'])&&$conf['pay_payaddmin']!=0&&!empty($conf['pay_payaddmax'])&&$conf['pay_payaddmax']!=0&&$realmoney>=$conf['pay_payaddstart']){
+                $randmoney = randomFloat(round($conf['pay_payaddmin'],2),round($conf['pay_payaddmax'],2));
+                $realmoney = round($realmoney + $randmoney, 2);
+                if($submitData['mode']==1) $getmoney = round($getmoney + $randmoney, 2);
+            }
 
-            $DB->update('order', ['type'=>$submitData['typeid'], 'channel'=>$submitData['channel'], 'subchannel'=>$submitData['subchannel'], 'realmoney'=>$realmoney, 'getmoney'=>$getmoney], ['trade_no'=>$trade_no]);
+            $resCount = $DB->update('order', ['type'=>$submitData['typeid'], 'channel'=>$submitData['channel'], 'subchannel'=>$submitData['subchannel'], 'realmoney'=>$realmoney, 'getmoney'=>$getmoney], ['trade_no'=>$trade_no, 'channel'=>0]);
+            if($resCount == 0) echojsonmsg('更新订单失败，请返回重试！');
         }
 
         $order['trade_no'] = $trade_no;
@@ -390,16 +503,20 @@ class Pay
         $order['uid'] = $pid;
         $order['addtime'] = date('Y-m-d H:i:s');
         $order['name'] = $name;
-        $order['realmoney'] = $realmoney;
+        $order['realmoney'] = sprintf("%.2f", $realmoney);
         $order['type'] = $submitData['typeid'];
         $order['channel'] = $submitData['channel'];
         $order['subchannel'] = $submitData['subchannel'];
         $order['typename'] = $submitData['typename'];
+        $order['plugin'] = $submitData['plugin'];
         $order['profits'] = \lib\Payment::updateOrderProfits($order, $submitData['plugin']);
-        $order['profits2'] = \lib\Payment::updateOrderProfits2($order, $submitData['plugin']);
         $order['sub_openid'] = $sub_openid;
         $order['sub_appid'] = $sub_appid;
+        $order['is_applet'] = $is_applet;
         $order['auth_code'] = $auth_code;
+        $order['cert_no'] = $cert_no;
+        $order['cert_name'] = $cert_name;
+        $order['min_age'] = $min_age;
 
         if($method == 'jump'){
             define("TRADE_NO", $trade_no);
@@ -431,7 +548,7 @@ class Pay
         }
         if($order){
             $type=$DB->getColumn("SELECT name FROM pre_type WHERE id='{$order['type']}' LIMIT 1");
-            $result = ['code'=>0, 'trade_no'=>$order['trade_no'],'out_trade_no'=>$order['out_trade_no'],'api_trade_no'=>$order['api_trade_no'],'type'=>$type,'pid'=>$order['uid'],'addtime'=>$order['addtime'],'endtime'=>$order['endtime'],'name'=>$order['name'],'money'=>$order['money'],'param'=>$order['param'],'buyer'=>$order['buyer'],'clientip'=>$order['ip'],'status'=>$order['status'],'refundmoney'=>$order['refundmoney']];
+            $result = ['code'=>0, 'trade_no'=>$order['trade_no'],'out_trade_no'=>$order['out_trade_no'],'api_trade_no'=>$order['api_trade_no'],'bill_trade_no'=>$order['bill_trade_no'],'bill_mch_trade_no'=>$order['bill_mch_trade_no'],'type'=>$type,'pid'=>$order['uid'],'addtime'=>$order['addtime'],'endtime'=>$order['endtime'],'name'=>$order['name'],'money'=>$order['money'],'param'=>$order['param'],'buyer'=>$order['buyer'],'clientip'=>$order['ip'],'status'=>$order['status'],'refundmoney'=>$order['refundmoney']];
             $result = array_filter($result, function($a){return !isEmpty($a);});
             return $result;
         }else{
@@ -444,10 +561,9 @@ class Pay
 
         $pid=intval($queryArr['pid']);
         if(!$conf['user_refund']) throw new Exception('管理员未开启商户后台自助退款');
-        if($userrow['refund'] == 0) throw new Exception('商户未开启订单退款API接口');
 
         $money = trim($queryArr['money']);
-	    if(!is_numeric($money) || !preg_match('/^[0-9.]+$/', $money))throw new Exception('金额输入错误');
+	    if(!empty($money) && (!is_numeric($money) || !preg_match('/^[0-9.]+$/', $money)))throw new Exception('金额输入错误');
         
         if(!empty($queryArr['trade_no'])){
 			$trade_no=daddslashes($queryArr['trade_no']);
@@ -464,7 +580,7 @@ class Pay
             $out_refund_no = daddslashes($queryArr['out_refund_no']);
             $refund_order = $DB->find('refundorder', '*', ['out_refund_no'=>$out_refund_no, 'uid'=>$pid]);
             if($refund_order && $refund_order['status'] == 1){
-                $result = ['code'=>0, 'refund_no'=>$refund_order['refund_no'], 'out_refund_no'=>$refund_order['out_refund_no'], 'trade_no'=>$refund_order['trade_no'], 'uid'=>$refund_order['uid'], 'money'=>$refund_order['money'], 'reducemoney'=>$refund_order['reducemoney'], 'msg'=>'已存在相同退款单号！退款金额￥'.$refund_order['money']];
+                $result = ['code'=>0, 'refund_no'=>$refund_order['refund_no'], 'out_refund_no'=>$refund_order['out_refund_no'], 'trade_no'=>$refund_order['trade_no'], 'uid'=>$refund_order['uid'], 'money'=>$refund_order['money'], 'reducemoney'=>$refund_order['reducemoney'], 'msg'=>'已存在相同退款单号！退款金额¥'.$refund_order['money']];
                 return $result;
             }elseif($refund_order && $refund_order['status'] == 0){
                 $refund_no = $refund_order['refund_no'];
@@ -473,7 +589,7 @@ class Pay
         
         $result = \lib\Order::refund($refund_no, $trade_no, $money, 1, $pid, $out_refund_no);
         if($result['code'] == 0){
-            $result['msg'] = '退款成功！退款金额￥'.$result['money'];
+            $result['msg'] = '退款成功！退款金额¥'.$result['money'];
         }
         return $result;
     }
@@ -500,6 +616,28 @@ class Pay
 
         $result = ['code'=>0, 'refund_no'=>$refund_order['refund_no'], 'out_refund_no'=>$refund_order['out_refund_no'], 'trade_no'=>$refund_order['trade_no'], 'out_trade_no'=>$out_trade_no, 'uid'=>$refund_order['uid'], 'money'=>$refund_order['money'], 'reducemoney'=>$refund_order['reducemoney'], 'status'=>$refund_order['status'], 'addtime'=>$refund_order['addtime'], 'endtime'=>$refund_order['endtime']];
 
+        return $result;
+    }
+
+    public static function close(){
+        global $conf, $DB, $userrow, $queryArr;
+
+        $pid=intval($queryArr['pid']);
+
+        if(!empty($queryArr['trade_no'])){
+			$trade_no=daddslashes($queryArr['trade_no']);
+		}elseif(!empty($queryArr['out_trade_no'])){
+			$out_trade_no=daddslashes($queryArr['out_trade_no']);
+            $trade_no = $DB->findColumn('order', 'trade_no', ['out_trade_no'=>$out_trade_no, 'uid'=>$pid]);
+            if(!$trade_no) throw new Exception('当前订单不存在！');;
+		}else{
+            throw new Exception('订单号不能为空');
+		}
+
+        $result = \lib\Order::close($trade_no, $pid);
+        if($result['code'] == 0){
+            $result['msg'] = '订单关闭成功';
+        }
         return $result;
     }
 }

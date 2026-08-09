@@ -7,7 +7,7 @@ class epayn_plugin
 		'showname'    => '彩虹易支付V2', //支付插件显示名称
 		'author'      => '彩虹', //支付插件作者
 		'link'        => '', //支付插件作者链接
-		'types'       => ['alipay','qqpay','wxpay','bank','jdpay'], //支付插件支持的支付方式，可选的有alipay,qqpay,wxpay,bank
+		'types'       => ['alipay','qqpay','wxpay','bank','jdpay','douyinpay'], //支付插件支持的支付方式，可选的有alipay,qqpay,wxpay,bank
 		'transtypes'  => ['alipay','wxpay','qqpay','bank'], //支付插件支持的转账方式，可选的有alipay,qqpay,wxpay,bank
 		'inputs' => [ //支付插件要求传入的参数以及参数显示名称，可选的有appid,appkey,appsecret,appurl,appmchid
 			'appurl' => [
@@ -84,13 +84,16 @@ class epayn_plugin
 	}
 
 	static private function getDevice(){
-		if (checkwechat()) {
+		global $device, $mdevice;
+		if (checkwechat() || $mdevice=='wechat') {
 			$device = 'wechat';
-		}elseif (checkmobbileqq()) {
+		}elseif (checkmobbileqq() || $mdevice=='qq') {
 			$device = 'qq';
-		}elseif (checkalipay()) {
+		}elseif (checkalipay() || $mdevice=='alipay') {
 			$device = 'alipay';
-		}elseif (checkmobile()) {
+		}elseif (checkdouyin() || $mdevice=='douyin') {
+			$device = 'douyin';
+		}elseif (checkmobile() || $device=='mobile') {
 			$device = 'mobile';
 		}else{
 			$device = 'pc';
@@ -156,7 +159,7 @@ class epayn_plugin
 			return ['type'=>'jump','url'=>$url];
 		}elseif($method == 'html'){
 			return ['type'=>'html','data'=>$url];
-		}elseif($method == 'scheme'){
+		}elseif($method == 'urlscheme'){
 			return ['type'=>'scheme','page'=>'wxpay_mini','url'=>$url];
 		}else{
 			if(checkwechat()){
@@ -226,6 +229,25 @@ class epayn_plugin
 		}
 	}
 
+	//抖音支付
+	static public function douyinpay(){
+		try{
+			list($method, $url) = self::pay_mapi('web','douyinpay');
+		}catch(Exception $ex){
+			return ['type'=>'error','msg'=>$ex->getMessage()];
+		}
+
+		if($method == 'jump'){
+			return ['type'=>'jump','url'=>$url];
+		}else{
+			if (checkmobile()) {
+				return ['type'=>'qrcode','page'=>'douyinpay_wap','url'=>$url];
+			} else {
+				return ['type'=>'qrcode','page'=>'douyinpay_qrcode','url'=>$url];
+			}
+		}
+	}
+
 	//异步回调
 	static public function notify(){
 		global $channel, $order;
@@ -250,9 +272,11 @@ class epayn_plugin
 			//支付人账号
 			$buyer = $_GET['buyer'];
 
+			$api_trade_no = $_GET['api_trade_no'];
+
 			if ($_GET['trade_status'] == 'TRADE_SUCCESS') {
 				if($out_trade_no == TRADE_NO && round($money,2)==round($order['realmoney'],2)){
-					processNotify($order, $trade_no, $buyer);
+					processNotify($order, $trade_no, $buyer, $api_trade_no);
 				}
 			}
 			return ['type'=>'html','data'=>'success'];
@@ -286,9 +310,11 @@ class epayn_plugin
 			//支付人账号
 			$buyer = $_GET['buyer'];
 
+			$api_trade_no = $_GET['api_trade_no'];
+
 			if($_GET['trade_status'] == 'TRADE_SUCCESS') {
 				if ($out_trade_no == TRADE_NO && round($money, 2)==round($order['realmoney'], 2)) {
-					processReturn($order, $trade_no, $buyer);
+					processReturn($order, $trade_no, $buyer, $api_trade_no);
 				}else{
 					return ['type'=>'error','msg'=>'订单信息校验失败'];
 				}
@@ -337,7 +363,11 @@ class epayn_plugin
 		$epay = new EpayCore($epay_config);
 		try{
 			$result = $epay->execute('api/transfer/submit', $params);
-			return ['code'=>0, 'status'=>$result['status'], 'orderid'=>$result['out_biz_no'], 'paydate'=>$result['paydate']];
+			if(isset($result['jumpurl'])){
+				return ['code'=>0, 'status'=>$result['status'], 'orderid'=>$result['out_biz_no'], 'paydate'=>$result['paydate'], 'wxpackage'=>$result['jumpurl']];
+			}else{
+				return ['code'=>0, 'status'=>$result['status'], 'orderid'=>$result['out_biz_no'], 'paydate'=>$result['paydate']];
+			}
 		}catch(Exception $e){
 			return ['code'=>-1, 'msg'=>$e->getMessage()];
 		}

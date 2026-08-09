@@ -6,7 +6,7 @@ include("../includes/common.php");
 
 if(isset($_GET['act']) && $_GET['act']=='qrlogin' && $conf['login_qq']==2){
 	if(isset($_SESSION['findpwd_qq']) && $qq=$_SESSION['findpwd_qq']){
-		$userrow=$DB->getRow("SELECT * FROM pre_user WHERE qq_uid='$qq' LIMIT 1");
+		$userrow=$DB->getRow("SELECT * FROM pre_user WHERE qq_uid=:qq LIMIT 1", [':qq'=>$qq]);
 		unset($_SESSION['findpwd_qq']);
 		if($userrow){
 			$uid=$userrow['uid'];
@@ -22,7 +22,7 @@ if(isset($_GET['act']) && $_GET['act']=='qrlogin' && $conf['login_qq']==2){
 			$DB->exec("update `pre_user` set `lasttime`=NOW() where `uid`='$uid'");
 			$result=array("code"=>0,"msg"=>"登录成功！正在跳转到用户中心","url"=>"./");
 		}elseif($islogin2==1){
-			$sds=$DB->exec("update `pre_user` set `qq_uid`='$qq' where `uid`='$uid'");
+			$sds=$DB->exec("update `pre_user` set `qq_uid`=:qq where `uid`=:uid", [':qq'=>$qq, ':uid'=>$uid]);
 			$result=array("code"=>0,"msg"=>"已成功绑定QQ账号！","url"=>"./editinfo.php");
 		}else{
 			$_SESSION['Oauth_qq_uid']=$openId;
@@ -46,8 +46,7 @@ $Oauth_config['callback']=$siteurl.'user/connect.php';
 if($_GET['code'] && ($conf['login_qq']==1 || $conf['login_qq']==3 || $conf['login_wx']==-1 || $conf['login_alipay']==-1)){
 	if($conf['login_qq']==1 && !isset($_GET['type'])){
 		$QC=new \lib\QC($QC_config);
-		$access_token=$QC->qq_callback();
-		$openid=$QC->get_openid($access_token);
+		[$access_token,$openid]=$QC->qq_callback();
 		$typename = 'QQ';
 		$typecolumn = 'qq_uid';
 	}else{
@@ -74,7 +73,7 @@ if($_GET['code'] && ($conf['login_qq']==1 || $conf['login_qq']==3 || $conf['logi
 		}
 	}
 
-	$userrow=$DB->getRow("SELECT * FROM pre_user WHERE {$typecolumn}='{$openid}' limit 1");
+	$userrow=$DB->getRow("SELECT * FROM pre_user WHERE {$typecolumn}=:openid limit 1", [':openid'=>$openid]);
 	if($userrow){
 		$uid=$userrow['uid'];
 		$key=$userrow['key'];
@@ -90,7 +89,7 @@ if($_GET['code'] && ($conf['login_qq']==1 || $conf['login_qq']==3 || $conf['logi
 		$DB->exec("update `pre_user` set `lasttime`=NOW() where `uid`='$uid'");
 		exit("<script language='javascript'>window.location.href='./';</script>");
 	}elseif($islogin2==1){
-		$sds=$DB->exec("update `pre_user` set `{$typecolumn}`='$openid' where `uid`='$uid'");
+		$sds=$DB->exec("update `pre_user` set `{$typecolumn}`=:openid where `uid`='$uid'", [':openid'=>$openid]);
 		@header('Content-Type: text/html; charset=UTF-8');
 		exit("<script language='javascript'>alert('已成功绑定{$typename}！');window.location.href='./editinfo.php';</script>");
 	}else{
@@ -114,9 +113,8 @@ if($_GET['code'] && ($conf['login_qq']==1 || $conf['login_qq']==3 || $conf['logi
 <title>QQ扫码登录 | <?php echo $conf['sitename']?></title>
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
 <link rel="stylesheet" href="<?php echo $cdnpublic?>twitter-bootstrap/3.4.1/css/bootstrap.min.css" type="text/css" />
-<link rel="stylesheet" href="<?php echo $cdnpublic?>animate.css/3.5.2/animate.min.css" type="text/css" />
+<link rel="stylesheet" href="<?php echo $cdnpublic?>animate.css/3.7.2/animate.min.css" type="text/css" />
 <link rel="stylesheet" href="<?php echo $cdnpublic?>font-awesome/4.7.0/css/font-awesome.min.css" type="text/css" />
-<link rel="stylesheet" href="<?php echo $cdnpublic?>simple-line-icons/2.4.1/css/simple-line-icons.min.css" type="text/css" />
 <link rel="stylesheet" href="./assets/css/font.css" type="text/css" />
 <link rel="stylesheet" href="./assets/css/app.css" type="text/css" />
 <style>input:-webkit-autofill{-webkit-box-shadow:0 0 0px 1000px white inset;-webkit-text-fill-color:#333;}img.logo{width:14px;height:14px;margin:0 5px 0 3px;}</style>
@@ -138,7 +136,7 @@ if($_GET['code'] && ($conf['login_qq']==1 || $conf['login_qq']==3 || $conf['logi
 		</div>
 		<div id="qrimg" class="list-group-item">
 		</div>
-		<div class="list-group-item" id="mobile" style="display:none;"><button type="button" id="mlogin" onclick="mloginurlnew()" class="btn btn-warning btn-block">跳转QQ快捷登录</button><br/><button type="button" onclick="qrlogin()" class="btn btn-success btn-block">我已完成登录</button></div>
+		<div class="list-group-item" id="mobile" style="display:none;"><button type="button" onclick="qrlogin()" class="btn btn-success btn-block">我已完成登录</button></div>
 		<div class="list-group-item">
 		<div class="btn-group">
 		<a href="login.php" class="btn btn-primary btn-rounded"><i class="fa fa-user"></i>&nbsp;返回登录</a>
@@ -158,7 +156,7 @@ if($_GET['code'] && ($conf['login_qq']==1 || $conf['login_qq']==3 || $conf['logi
 </div>
 <script src="<?php echo $cdnpublic?>jquery/3.4.1/jquery.min.js"></script>
 <script src="<?php echo $cdnpublic?>twitter-bootstrap/3.4.1/js/bootstrap.min.js"></script>
-<script src="<?php echo $cdnpublic?>layer/3.1.1/layer.min.js"></script>
+<script src="<?php echo $cdnpublic?>layer/3.1.1/layer.js"></script>
 <script src="./assets/js/qrlogin.js"></script>
 </body>
 </html>

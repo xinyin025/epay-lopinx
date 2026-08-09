@@ -8,7 +8,7 @@ include './head.php';
 if($islogin==1){}else exit("<script language='javascript'>window.location.href='./login.php';</script>");
 
 $type_select = '<option value="0">所有支付方式</option>';
-$type2_select = '';
+$type_select2 = '';
 $rs = $DB->getAll("SELECT * FROM pre_type ORDER BY id ASC");
 foreach($rs as $row){
 	$type_select .= '<option value="'.$row['id'].'">'.$row['showname'].'</option>';
@@ -90,6 +90,12 @@ unset($rs);
 							<input type="text" class="form-control" name="daytop" id="daytop" placeholder="0或留空为没有单日限额，超出限额会暂停使用该通道" title="修改后第二天生效">
 						</div>
 					</div>
+					<div class="form-group">
+						<label class="col-sm-2 control-label no-padding-right">单日限笔</label>
+						<div class="col-sm-10">
+							<input type="text" class="form-control" name="daymaxorder" id="daymaxorder" placeholder="0或留空为没有单日支付订单数量限制">
+						</div>
+					</div>
 					<div class="row">
 					<div class="col-sm-6">
 					<div class="form-group">
@@ -106,6 +112,15 @@ unset($rs);
 						</div>
 					</div>
 					</div>
+					</div>
+					<div class="form-group">
+						<label class="col-sm-2 control-label no-padding-right">开放时间</label>
+						<div class="col-sm-5">
+							<input type="text" class="form-control" name="timestart" id="timestart" placeholder="开始时间0~23小时" title="">
+						</div>
+						<div class="col-sm-5">
+							<input type="text" class="form-control" name="timestop" id="timestop" placeholder="结束时间0~23小时" title="">
+						</div>
 					</div>
 				</form>
 			</div>
@@ -147,7 +162,7 @@ unset($rs);
     </div>
   </div>
 </div>
-<script src="<?php echo $cdnpublic?>layer/3.1.1/layer.min.js"></script>
+<script src="<?php echo $cdnpublic?>layer/3.1.1/layer.js"></script>
 <script src="../assets/js/bootstrap-table.min.js"></script>
 <script src="../assets/js/bootstrap-table-page-jump-to.min.js"></script>
 <script src="../assets/js/custom.js"></script>
@@ -200,6 +215,22 @@ $(document).ready(function(){
 				title: '支付插件',
 				formatter: function(value, row, index) {
 					return '<span onclick="showPlugin(\''+value+'\')" title="查看支付插件详情">'+value+'</span>';
+				}
+			},
+			{
+				field: '',
+				title: '今日笔数',
+				visible: false,
+				formatter: function(value, row, index) {
+					return '<a onclick="getAll(2,'+row.id+',this)" title="点此获取最新数据">[刷新]</a>';
+				}
+			},
+			{
+				field: '',
+				title: '昨日笔数',
+				visible: false,
+				formatter: function(value, row, index) {
+					return '<a onclick="getAll(3,'+row.id+',this)" title="点此获取最新数据">[刷新]</a>';
 				}
 			},
 			{
@@ -276,12 +307,6 @@ function changeType(plugin){
 }
 function changeMode(){
 	var mode = parseInt($("#mode").val());
-	if(mode>0){
-		$("#daytop").val('');
-		$("#daytop").prop("disabled", true);
-	}else{
-		$("#daytop").prop("disabled", false);
-	}
 }
 function addframe(){
 	$("#modal-store").modal('show');
@@ -293,9 +318,12 @@ function addframe(){
 	$("#costrate").val('');
 	$("#type").val(0);
 	$("#daytop").val('');
+	$("#daymaxorder").val('');
 	$("#paymin").val('');
 	$("#paymax").val('');
 	$("#plugin").empty();
+	$("#timestart").val('');
+	$("#timestop").val('');
 }
 function editframe(id){
 	var ii = layer.load(2, {shade:[0.1,'#fff']});
@@ -315,9 +343,12 @@ function editframe(id){
 				$("#costrate").val(data.data.costrate);
 				$("#type").val(data.data.type);
 				$("#daytop").val(data.data.daytop);
+				$("#daymaxorder").val(data.data.daymaxorder);
 				$("#paymin").val(data.data.paymin);
 				$("#paymax").val(data.data.paymax);
 				$("#mode").val(data.data.mode);
+				$("#timestart").val(data.data.timestart);
+				$("#timestop").val(data.data.timestop);
 				changeType(data.data.plugin);
 				changeMode()
 			}else{
@@ -348,9 +379,12 @@ function copyframe(id){
 				$("#costrate").val(data.data.costrate);
 				$("#type").val(data.data.type);
 				$("#daytop").val(data.data.daytop);
+				$("#daymaxorder").val(data.data.daymaxorder);
 				$("#paymin").val(data.data.paymin);
 				$("#paymax").val(data.data.paymax);
 				$("#mode").val(data.data.mode);
+				$("#timestart").val(data.data.timestart);
+				$("#timestop").val(data.data.timestop);
 				changeType(data.data.plugin);
 				changeMode()
 			}else{

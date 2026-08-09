@@ -54,7 +54,7 @@ case 'getcount':
 		$settlemoney=$DB->getColumn("SELECT SUM(money) FROM pre_settle");
 
 		$today=date("Y-m-d");
-		$rs=$DB->query("SELECT type,channel,realmoney,profitmoney from pre_order where status=1 and date>='$today'");
+		$rs=$DB->query("SELECT type,channel,realmoney,profitmoney from pre_order where (status=1 OR status=3) and date>='$today'");
 		foreach($paytype as $id=>$type){
 			$order_paytype[$id]=0;
 			$profit_paytype[$id]=0;
@@ -174,6 +174,38 @@ case 'article_upload':
 	}
 break;
 
+case 'testproxy':
+	$conf['proxy_server'] = trim($_POST['proxy_server']);
+	$conf['proxy_port'] = $_POST['proxy_port'];
+	$conf['proxy_user'] = trim($_POST['proxy_user']);
+	$conf['proxy_pwd'] = trim($_POST['proxy_pwd']);
+	$conf['proxy_type'] = $_POST['proxy_type'];
+	try{
+		check_proxy('https://dl.amh.sh/ip.htm');
+	}catch(Exception $e){
+		try{
+			check_proxy('https://myip.ipip.net/');
+		}catch(Exception $e){
+			exit('{"code":-1,"msg":"'.$e->getMessage().'"}');
+		}
+	}
+	exit('{"code":0}');
+break;
+
+case 'generate_wxa_link':
+	$wechatid = intval($_POST['channel']);
+	$wxinfo = \lib\Channel::getWeixin($wechatid);
+	if(!$wxinfo)exit('{"code":-1,"msg":"该微信小程序不存在"}');
+	$path = 'pages/getopenid/getopenid';
+	$query = 'url='.$siteurl.'&wechatid='.$wechatid;
+	$wechat = new \lib\wechat\WechatAPI($wechatid);
+	try{
+		$url_link = $wechat->generate_link($path, $query, 3600);
+	}catch(Exception $e){
+		exit('{"code":-1,"msg":"'.$e->getMessage().'"}');
+	}
+	exit('{"code":0,"url":"'.$url_link.'"}');
+break;
 default:
 	exit('{"code":-4,"msg":"No Act"}');
 break;

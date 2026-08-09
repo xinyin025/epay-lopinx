@@ -77,7 +77,7 @@ elseif($act=='order')
 	}
 	if($row){
 		$type=$DB->getColumn("SELECT name FROM pre_type WHERE id='{$row['type']}' LIMIT 1");
-		$result=array("code"=>1,"msg"=>"succ","trade_no"=>$row['trade_no'],"out_trade_no"=>$row['out_trade_no'],"api_trade_no"=>$row['api_trade_no'],"type"=>$type,"pid"=>$row['uid'],"addtime"=>$row['addtime'],"endtime"=>$row['endtime'],"name"=>$row['name'],"money"=>$row['money'],"param"=>$row['param'],"buyer"=>$row['buyer'],"status"=>$row['status'],"payurl"=>$row['payurl']);
+		$result=array("code"=>1,"msg"=>"succ","trade_no"=>$row['trade_no'],"out_trade_no"=>$row['out_trade_no'],"api_trade_no"=>$row['api_trade_no'],"bill_trade_no"=>$row['bill_trade_no'],"type"=>$type,"pid"=>$row['uid'],"addtime"=>$row['addtime'],"endtime"=>$row['endtime'],"name"=>$row['name'],"money"=>$row['money'],"param"=>$row['param'],"buyer"=>$row['buyer'],"status"=>$row['status'],"payurl"=>$row['payurl']);
 	}else{
 		$result=array("code"=>-1,"msg"=>"订单号不存在");
 	}
@@ -139,6 +139,20 @@ elseif($act=='refund')
 
 	$refund_no = date("YmdHis").rand(11111,99999);
 	$result = \lib\Order::refund($refund_no, $trade_no, $money, 1, $pid);
+	if($result['code'] == 0){
+		$result['msg'] = '退款成功！退款金额¥'.$result['money'];
+	}
+	exit(json_encode($result));
+}
+elseif($act=='refundapi')
+{
+	$money = trim($_POST['money']);
+	$trade_no=daddslashes($_POST['trade_no']);
+	if(!is_numeric($money) || !preg_match('/^[0-9.]+$/', $money))exit(json_encode(['code'=>-1, 'msg'=>'金额输入错误']));
+	if(!isset($_POST['key']) || $_POST['key']!==md5($trade_no.SYS_KEY.$trade_no))exit(json_encode(['code'=>-1, 'msg'=>'密钥错误']));
+
+	$refund_no = date("YmdHis").rand(11111,99999);
+	$result = \lib\Order::refund($refund_no, $trade_no, $money, 1);
 	if($result['code'] == 0){
 		$result['msg'] = '退款成功！退款金额￥'.$result['money'];
 	}
