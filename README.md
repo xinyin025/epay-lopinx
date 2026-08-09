@@ -72,7 +72,7 @@
 
 ## 📋 系统要求
 
-| 配置类型 | PHP | MySQL | Nginx/Apache | 内存 | 磁盘空间 |
+| 配置类型 | PHP | MySQL | Nginx/Apache | 内存 | 磁盘 |
 |---------|-----|-------|--------------|------|----------|
 | **最低配置** | 7.1+ | 5.6+ | 2.4+ | 512MB | 100MB |
 | **推荐配置** | 7.4+ | 5.7+ | 1.18+ | 1GB+ | 500MB+ |
@@ -105,9 +105,19 @@ cd epay
 ```nginx
 location / {
     if (!-e $request_filename) {
-        rewrite ^(.*)$ /index.php?s=$1 last;
-        break;
+        rewrite ^/(.[a-zA-Z0-9\-\_]+).html$ /index.php?mod=$1 last;
     }
+    rewrite ^/pay/(.*)$ /pay.php?s=$1 last;
+    rewrite ^/api/(.*)$ /api.php?s=$1 last;
+    rewrite ^/doc/(.[a-zA-Z0-9\-\_]+).html$ /index.php?doc=$1 last;
+}
+
+location ^~ /plugins {
+    deny all;
+}
+
+location ^~ /includes {
+    deny all;
 }
 ```
 
@@ -127,9 +137,11 @@ https://yourdomain.com/cron.php
 
 ### 7️⃣ 登录后台
 
-- 后台地址：`/admin`
-- 默认账号：`admin`
-- 默认密码：`123456`
+| 项目 | 说明 |
+|------|------|
+| **后台地址** | `/admin` |
+| **默认账号** | `admin` |
+| **默认密码** | `123456` |
 
 **⚠️ 首次登录后请立即修改密码！**
 
