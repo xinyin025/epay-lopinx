@@ -112,11 +112,7 @@ location / {
     rewrite ^/doc/(.[a-zA-Z0-9\-\_]+).html$ /index.php?doc=$1 last;
 }
 
-location ^~ /plugins {
-    deny all;
-}
-
-location ^~ /includes {
+location ~ ^/(plugins|includes) {
     deny all;
 }
 ```
